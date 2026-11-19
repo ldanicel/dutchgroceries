@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 – 2026-11-19
 
 - **Several accounts per supermarket**: connect more than one Albert Heijn or Jumbo account (for
   example yours and your partner's) and see them in one household dashboard. Each account has its own
