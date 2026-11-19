@@ -1,0 +1,38 @@
+{
+ "summary": {
+  "transactionId": "a1b2c3-00000000-0000-4000-8000-000000000001.json",
+  "purchaseEndOn": "2025-05-03T14:20:00Z",
+  "receiptSource": "STORE",
+  "store": {
+   "storeId": "9999",
+   "name": "Jumbo Voorbeeldstad"
+  },
+  "pointBalance": 13
+ },
+ "detail": {
+  "receiptImage": {
+   "image": "{\"documents\": [{\"documents\": [{\"printSections\": [{\"textObjects\": [{\"textLines\": [{\"texts\": [{\"text\": \"JUMBO VOORBEELDSTAD\"}]}, {\"texts\": [{\"text\": \"Voorbeeldstraat 1\"}]}, {\"texts\": [{\"text\": \"STORE 9999\"}]}, {\"texts\": [{\"text\": \"OMSCHRIJVING                          BEDRAG\"}]}, {\"texts\": [{\"text\": \"JUMBO HALFVOLLE MELK                    1,19\"}]}, {\"texts\": [{\"text\": \"TEST KAAS JONG BELEGEN 48+              6,49\"}]}, {\"texts\": [{\"text\": \"TEST APPELS\"}]}, {\"texts\": [{\"text\": \"  0,512 kg x 3,49                       1,79\"}]}, {\"texts\": [{\"text\": \"TEST YOGHURT\"}]}, {\"texts\": [{\"text\": \"  2 X 1,25 P                            2,50\"}]}, {\"texts\": [{\"text\": \"TEST COLA 1,5L                          1,89\"}]}, {\"texts\": [{\"text\": \"STATIEGELD                              0,15\"}]}, {\"texts\": [{\"text\": \"KORTING 2E HALVE PRIJS                 -0,63\"}]}, {\"texts\": [{\"text\": \"----------------------------------------\"}]}, {\"texts\": [{\"text\": \"Totaal                                 13,38\"}]}, {\"texts\": [{\"text\": \"Betaald:\"}]}, {\"texts\": [{\"text\": \"PIN                                    13,13\"}]}, {\"texts\": [{\"text\": \"Retour emballage                        0,25\"}]}, {\"texts\": [{\"text\": \"BTW overzicht\"}]}]}]}]}]}]}",
+   "type": "JSON",
+   "receiptPoints": {
+    "earned": 13,
+    "newBalance": 100,
+    "oldBalance": 87,
+    "redeemed": 0
+   }
+  },
+  "store": {
+   "storeId": "9999",
+   "name": "Jumbo Voorbeeldstad",
+   "location": {
+    "address": {
+     "city": "Voorbeeldstad",
+     "houseNumber": "1",
+     "postalCode": "1234AB",
+     "street": "Voorbeeldstraat"
+    }
+   }
+  },
+  "purchaseEndOn": "2025-05-03T14:20:00Z",
+  "receiptSource": "STORE"
+ }
+}

@@ -1,0 +1,31 @@
+# Example unit for running the dashboard directly on a host (no container).
+# Adjust the paths, then: cp groceries-*.{service,timer} /etc/systemd/system/
+[Unit]
+Description=Groceries dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=groceries
+Group=groceries
+Environment=GROCERIES_ENV_FILE=/opt/dutchgroceries/config.env
+ExecStart=/opt/dutchgroceries/venv/bin/groceries serve
+Restart=on-failure
+RestartSec=5
+# hardening (the dashboard also connects accounts and runs syncs, so it writes data and secrets)
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/opt/dutchgroceries/data /opt/dutchgroceries/secrets
+
+[Install]
+WantedBy=multi-user.target

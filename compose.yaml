@@ -1,0 +1,34 @@
+# docker compose up -d            -> dashboard on http://127.0.0.1:8000
+# docker compose run --rm web login ah   -> one-time login (interactive)
+services:
+  web:
+    build: .
+    image: dutchgroceries:latest
+    command: serve
+    env_file: { path: .env, required: false }
+    ports:
+      - "127.0.0.1:8000:8000"   # change to "0.0.0.0:8000:8000" to reach it from your LAN
+    volumes:
+      - groceries-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  sync:
+    image: dutchgroceries:latest
+    depends_on: [web]
+    # sync now, then once a day
+    entrypoint: ["sh", "-c", "while :; do groceries sync; sleep \"$${GROCERIES_SYNC_INTERVAL:-86400}\"; done"]
+    env_file: { path: .env, required: false }
+    volumes:
+      - groceries-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+volumes:
+  groceries-data:

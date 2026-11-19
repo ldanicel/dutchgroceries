@@ -1,0 +1,23 @@
+# personal data and credentials never go in git
+data/
+secrets/
+*.db
+*.db-wal
+*.db-shm
+.env
+config.env
+*.log
+*.csv
+*.sqlite
+*-token.json
+raw/
+checkjebon/
+
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/

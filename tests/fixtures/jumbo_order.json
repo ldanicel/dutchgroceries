@@ -1,0 +1,9 @@
+{
+ "id": "900000001",
+ "orderDate": "2025-06-01T09:00:00Z",
+ "status": "DELIVERED",
+ "totalPrice": {
+  "amount": 54.32
+ },
+ "fulfilmentType": "HOME_DELIVERY"
+}

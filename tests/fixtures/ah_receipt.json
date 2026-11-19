@@ -1,0 +1,36 @@
+{
+ "summary": {
+  "id": "AHtest0000000000000000000000000000000001",
+  "dateTime": "2025-03-01T10:15:00.000Z",
+  "totalAmount": {"amount": 21.25},
+  "storeAddress": {"street": "Voorbeeldstraat", "houseNumber": "1", "postalCode": "1234AB", "city": "Voorbeeldstad", "countryCode": "NLD"}
+ },
+ "detail": {
+  "id": "AHtest0000000000000000000000000000000001",
+  "storeInfo": ["9999"],
+  "storeType": "AH_REGULAR",
+  "products": [
+   {"id": 100001, "quantity": 2, "name": "TEST MELK", "externalIds": null, "weight": null, "price": {"amount": 1.25}, "amount": {"amount": 2.5}, "deposit": null, "indicators": [{"name": "bonusDiscount", "discount": "B", "percentage": null}]},
+   {"id": 100002, "quantity": 1, "name": "TEST KAAS", "externalIds": null, "weight": null, "price": null, "amount": {"amount": 6.0}, "deposit": null, "indicators": null},
+   {"id": 100003, "quantity": 1, "name": "TEST APPELS", "externalIds": null, "weight": {"amount": 0.5, "unit": "KG"}, "price": null, "amount": {"amount": 1.5}, "deposit": null, "indicators": null},
+   {"id": 100004, "quantity": 1, "name": "TEST COLA", "externalIds": null, "weight": null, "price": null, "amount": {"amount": 1.0}, "deposit": {"amount": 0.15}, "indicators": null},
+   {"id": 0, "quantity": 1, "name": "TEST STEMPEL", "externalIds": null, "weight": null, "price": null, "amount": {"amount": 0}, "deposit": null, "indicators": null}
+  ],
+  "subtotalProducts": {"quantity": 5, "amount": {"amount": 11.15}},
+  "discounts": [
+   {"type": "BONUS", "name": "TESTBONUS", "amount": {"amount": -0.5}},
+   {"type": "BBOX", "name": "BONUS BOX", "amount": {"amount": -0.4}}
+  ],
+  "discountTotal": {"amount": 0.9},
+  "discountPersonal": {"description": "BONUS BOX", "amount": {"amount": 0.4}},
+  "subtotalDiscount": {"amount": 10.25},
+  "stamps": {"quantity": 110, "amount": {"amount": 11.0}},
+  "total": {"amount": 21.25},
+  "payments": [{"method": "PINNEN", "amount": {"amount": 21.25}}],
+  "change": null,
+  "promotions": [],
+  "transaction": {"store": 9999, "lane": 1, "id": 1, "dateTime": "2025-03-01 11:15:00"},
+  "address": {"street": "Voorbeeldstraat", "houseNumber": "1", "postalCode": "1234AB", "city": "Voorbeeldstad", "countryCode": "NLD"},
+  "vat": null
+ }
+}
