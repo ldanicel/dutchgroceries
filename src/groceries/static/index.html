@@ -40,7 +40,7 @@ header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justi
   padding: 20px 24px 8px; max-width: 1400px; margin: 0 auto; }
 header h1 { margin: 0; font-size: 22px; font-weight: 650; }
 header .meta { color: var(--text-2); font-size: 13px; }
-.controls { display: flex; gap: 8px; align-items: center; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 select, button { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
   border-radius: 6px; padding: 4px 8px; }
 main { max-width: 1400px; margin: 0 auto; padding: 8px 24px 40px; display: grid; gap: 16px;
@@ -81,6 +81,14 @@ button.mini { font-size: 11px; padding: 1px 8px; margin-left: 6px; }
 .conn h3 { margin: 0; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .conn .row { color: var(--text-2); font-size: 13px; }
 .conn .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.conn-store { margin-bottom: 16px; }
+.conn-store > h3 { margin: 0 0 8px; font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.conn .who { color: var(--text-2); font-weight: 400; font-size: 13px; }
+.acct { font-size: 12px; color: var(--text-2); margin-right: 4px; }
+dialog label.field { display: block; margin: 4px 0 2px; font-size: 13px; color: var(--text-2); }
+dialog input[type=text] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 8px; width: 100%; max-width: 280px; }
+.hint { font-size: 13px; border-left: 3px solid var(--accent); padding: 4px 10px; margin: 8px 0; color: var(--text-2); }
 .status { font-size: 12px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); color: var(--text-2); white-space: nowrap; }
 .status.ok { color: var(--down); border-color: var(--down); }
 .status.bad { color: var(--up); border-color: var(--up); }
@@ -112,8 +120,10 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
     <div class="meta" id="meta">Loading…</div>
   </div>
   <div class="controls">
-    <label for="retailer" class="meta">Retailer</label>
-    <select id="retailer"><option value="">All</option></select>
+    <span id="retailer-wrap"><label for="retailer" class="meta">Retailer</label>
+    <select id="retailer"><option value="">All</option></select></span>
+    <span id="account-wrap" hidden><label for="account" class="meta">Account</label>
+    <select id="account"><option value="">All accounts</option></select></span>
     <button id="conn-toggle" title="Connected supermarkets">Connections</button>
     <button id="theme" title="Toggle light/dark">◐</button>
   </div>
@@ -209,6 +219,11 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
 </main>
 <dialog id="connect-dialog">
   <h2 id="cd-title">Connect</h2>
+  <div id="cd-new" hidden>
+    <label class="field" for="cd-label">Name for this account</label>
+    <input type="text" id="cd-label" maxlength="40" placeholder="e.g. Partner" autocomplete="off">
+    <p class="hint" id="cd-hint"></p>
+  </div>
   <ol>
     <li>Once: drag this button to your bookmarks bar (show it with Ctrl/Cmd+Shift+B):
       <a class="helper-link" id="cd-helper" href="#" title="Drag me to the bookmarks bar">🔗 Groceries connect helper</a></li>
@@ -237,11 +252,13 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const series = () => [1, 2, 3, 4, 5, 6, 7, 8].map((i) => css("--s" + i));
 const charts = {};
 let retailer = "";
+let account = "";
+let accountList = [];
 let productOrder = "spend";
 let selected = null;
 
 async function api(path, params = {}) {
-  const q = new URLSearchParams({...(retailer ? {retailer} : {}), ...params});
+  const q = new URLSearchParams({...(retailer ? {retailer} : {}), ...(account ? {account} : {}), ...params});
   const r = await fetch(path + (q.toString() ? "?" + q : ""));
   if (!r.ok) throw new Error(path + ": HTTP " + r.status);
   return r.json();
@@ -395,7 +412,7 @@ function badge(r) {
 
 function purchasesTable(rows) {
   $("#t-purchases").innerHTML = `<thead><tr><th>Date</th><th>Where</th><th class="n">Items</th><th class="n">Saved</th><th class="n">Spend</th></tr></thead><tbody>` +
-    rows.map((r) => `<tr><td>${esc(r.local_date)}</td><td>${badge(r.retailer)} ${r.channel === "online" ? "Online order" : esc([r.store_street, r.store_city].filter(Boolean).join(", "))}</td>
+    rows.map((r) => `<tr><td>${esc(r.local_date)}</td><td>${badge(r.retailer)}${accountList.length > 1 && r.account ? `<span class="acct">${esc(r.account)}</span>` : ""} ${r.channel === "online" ? "Online order" : esc([r.store_street, r.store_city].filter(Boolean).join(", "))}</td>
       <td class="n">${r.item_count}</td><td class="n">${r.saved ? eur(r.saved) : ""}</td><td class="n">${eur(r.spend)}</td></tr>`).join("") + "</tbody>";
 }
 
@@ -510,34 +527,51 @@ async function post(path, body) {
   if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
   return j;
 }
+const allAccounts = () => conn.retailers.flatMap((r) => r.accounts.map((a) => ({...a, retailer: r.retailer, name: r.name})));
 function renderConnections() {
   const rs = conn.retailers;
-  const anyConnected = rs.some((r) => r.connected);
-  const broken = rs.filter((r) => r.needs_reconnect);
-  const firstRun = !anyConnected && !rs.some((r) => r.purchases);
+  const accts = allAccounts();
+  const anyConnected = accts.some((a) => a.connected);
+  const broken = accts.filter((a) => a.needs_reconnect);
+  const multi = accts.length > 1;
+  const named = (a) => a.name + (multi ? ` (${a.label})` : "");
+  const firstRun = !anyConnected && !accts.some((a) => a.purchases);
   $("#conn-title").textContent = firstRun ? "Welcome: connect a supermarket to get started" : "Connections";
   $("#conn-sub").textContent = firstRun
     ? "Connect your Albert Heijn and/or Jumbo account. The first sync pulls all the receipts the retailer still keeps (AH: 27 months). Logins stay on this server."
-    : "Supermarket accounts this app syncs. Logins are stored on this server only.";
+    : "Supermarket accounts this app syncs, combined into one household overview. Logins are stored on this server only.";
   if (firstRun || broken.length) $("#connections").hidden = false;
   $("#reconnect-banner").hidden = !broken.length;
-  $("#reconnect-banner").innerHTML = broken.map((r) => `<span>⚠ The ${esc(r.name)} login has expired; daily syncs stop until you reconnect.</span>
-    <button class="primary" data-act="connect" data-r="${esc(r.retailer)}">Reconnect ${esc(r.name)}</button>`).join("");
+  $("#reconnect-banner").innerHTML = broken.map((a) => `<span>⚠ The ${esc(named(a))} login has expired; daily syncs stop until you reconnect.</span>
+    <button class="primary" data-act="connect" data-r="${esc(a.retailer)}" data-id="${a.id}">Reconnect ${esc(named(a))}</button>`).join("");
+  const busy = conn.syncing ? "disabled" : "";
   $("#conn-grid").innerHTML = rs.map((r) => {
-    const st = r.needs_reconnect ? `<span class="status bad">⚠ Needs reconnect</span>`
-      : r.connected ? `<span class="status ok">✓ Connected</span>` : `<span class="status">Not connected</span>`;
-    const ls = r.last_sync;
-    const lastLine = ls ? `Last sync ${ago(ls.finished_at || ls.started_at)} · ${esc(ls.status)}` : "Never synced";
-    const busy = conn.syncing ? "disabled" : "";
-    const actions = r.connected
-      ? `<button ${busy} data-act="sync" data-r="${esc(r.retailer)}">${conn.syncing ? "Syncing…" : "Sync now"}</button>
-         <button data-act="connect" data-r="${esc(r.retailer)}" class="${r.needs_reconnect ? "primary" : ""}">Reconnect</button>
-         <button class="danger" data-act="disconnect" data-r="${esc(r.retailer)}">Disconnect</button>`
-      : `<button class="primary" data-act="connect" data-r="${esc(r.retailer)}">Connect ${esc(r.name)}</button>`;
-    return `<div class="conn"><h3>${esc(r.name)} ${st}</h3>
-      <div class="row">${r.account ? "Account " + esc(r.account) : r.connected ? "Account connected" : "No account linked"}</div>
-      <div class="row">${r.purchases ? `${r.purchases} purchases · ${esc(r.first)} → ${esc(r.last)}` : "No purchases yet"}</div>
-      <div class="row">${lastLine}</div><div class="actions">${actions}</div></div>`;
+    const cards = r.accounts.map((a) => {
+      const st = a.needs_reconnect ? `<span class="status bad">⚠ Needs reconnect</span>`
+        : a.connected ? `<span class="status ok">✓ Connected</span>` : `<span class="status">Not connected</span>`;
+      const ls = a.last_sync;
+      const lastLine = ls ? `Last sync ${ago(ls.finished_at || ls.started_at)} · ${esc(ls.status)}` : "Never synced";
+      const ids = `data-r="${esc(r.retailer)}" data-id="${a.id}"`;
+      const actions = a.connected
+        ? `<button ${busy} data-act="sync" ${ids}>${conn.syncing ? "Syncing…" : "Sync now"}</button>
+           <button data-act="connect" ${ids} class="${a.needs_reconnect ? "primary" : ""}">Reconnect</button>
+           <button data-act="rename" ${ids}>Rename</button>
+           <button class="danger" data-act="disconnect" ${ids}>Disconnect</button>`
+        : `<button class="primary" data-act="connect" ${ids}>Reconnect</button>
+           <button data-act="rename" ${ids}>Rename</button>`;
+      return `<div class="conn"><h3><span>${esc(a.label)}</span> ${st}</h3>
+        <div class="row">${a.account ? "Account " + esc(a.account) : a.connected ? "Account connected" : "No login stored"}</div>
+        <div class="row">${a.purchases ? `${a.purchases} purchases · ${esc(a.first)} → ${esc(a.last)}` : "No purchases yet"}</div>
+        <div class="row">${lastLine}</div><div class="actions">${actions}</div></div>`;
+    }).join("");
+    const add = r.accounts.length
+      ? `<button data-act="add" data-r="${esc(r.retailer)}">+ Add another ${esc(r.name)} account</button>`
+      : "";
+    const empty = `<div class="conn"><h3><span>No account yet</span> <span class="status">Not connected</span></h3>
+      <div class="row">No account linked</div>
+      <div class="actions"><button class="primary" data-act="add" data-r="${esc(r.retailer)}">Connect ${esc(r.name)}</button></div></div>`;
+    return `<div class="conn-store"><h3><span>${esc(r.name)}</span>${add}</h3>
+      <div class="conn-grid">${cards || empty}</div></div>`;
   }).join("");
 }
 async function loadConnections() {
@@ -549,19 +583,41 @@ async function loadConnections() {
     if (conn.syncing && !connPoll) {
       connPoll = setInterval(async () => {
         await loadConnections();
-        if (!conn.syncing) { clearInterval(connPoll); connPoll = null; load(); }
+        if (!conn.syncing) { clearInterval(connPoll); connPoll = null; load(); loadAccounts(); }
       }, 3000);
     }
   } catch (_) {}
 }
-function openConnect(slug) {
+let connectingId = null;  // the account slot being reconnected; null: a new account
+function openConnect(slug, id) {
   const r = conn.retailers.find((x) => x.retailer === slug);
-  connecting = slug;
-  $("#cd-title").textContent = (r && r.connected ? "Reconnect " : "Connect ") + (r ? r.name : slug);
+  const a = id != null ? r.accounts.find((x) => x.id === id) : null;
+  connecting = slug; connectingId = a ? a.id : null;
+  const adding = !a && r.accounts.length > 0;
+  $("#cd-title").textContent = a ? `Reconnect ${r.name}: ${a.label}` : adding ? `Add another ${r.name} account` : `Connect ${r.name}`;
+  $("#cd-new").hidden = !!a;
+  $("#cd-label").value = "";
+  $("#cd-label").placeholder = adding ? "e.g. Partner" : "Main";
+  const others = r.accounts.map((x) => x.label).join(", ");
+  $("#cd-hint").hidden = !adding && !a;
+  $("#cd-hint").innerHTML = a
+    ? ""
+    : `Log in with the <b>other</b> ${esc(r.name)} account. This browser may still be logged in to ${esc(others)}: `
+      + (slug === "ah" ? `log out on ah.nl first, ` : `the Jumbo login page asks for a fresh login; if it does not, log out on jumbo.com first, `)
+      + `or open this app in a private window. Connecting an account that is already here is refused.`;
+  if (a) {
+    $("#cd-new").hidden = false;
+    $("#cd-new").querySelectorAll("label, input").forEach((e) => { e.hidden = true; });
+    $("#cd-hint").hidden = false;
+    $("#cd-hint").textContent = `Log in as the ${r.name} account "${a.label}"${a.account ? " (" + a.account + ")" : ""}. Logging in as a different account is refused.`;
+  } else {
+    $("#cd-new").querySelectorAll("label, input").forEach((e) => { e.hidden = false; });
+  }
   $("#cd-helper").href = conn.helper;
   $("#cd-step3").innerHTML = HELP[slug].step3;
   $("#cd-manual-help").innerHTML = HELP[slug].manual;
-  $("#cd-open").textContent = "Open " + (r ? r.name : slug) + " login";
+  $("#cd-open").textContent = "Open " + r.name + " login";
+  $("#cd-open-note").textContent = "";
   $("#cd-msg").textContent = ""; $("#cd-msg").className = "msg";
   $("#cd-paste").value = "";
   $("#connect-dialog").showModal();
@@ -571,14 +627,14 @@ async function finishConnect(body) {
   msg.className = "msg"; msg.textContent = "Connecting…";
   try {
     const res = await post(`/api/connections/${connecting}/finish`, body);
-    msg.className = "msg ok"; msg.textContent = "Connected" + (res.account ? " as " + res.account : "") + ". Starting the first sync…";
-    await post(`/api/connections/${connecting}/sync`).catch(() => {});
-    setTimeout(() => { $("#connect-dialog").close(); loadConnections(); }, 1200);
+    msg.className = "msg ok"; msg.textContent = `Connected "${res.label}"` + (res.account ? " (" + res.account + ")" : "") + ". Starting the first sync…";
+    await post(`/api/accounts/${Number(res.account_id)}/sync`).catch(() => {});
+    setTimeout(() => { $("#connect-dialog").close(); loadConnections(); loadAccounts(); }, 1200);
   } catch (e) {
     msg.className = "msg err"; msg.textContent = e.message;
   }
 }
-// the login tab hands the code to /connect/callback; watch for the card to change while the dialog is open
+// the login tab hands the code to /connect/callback; watch for an account to change while the dialog is open
 let connectWatch = null;
 function watchForConnect(slug, since) {
   clearInterval(connectWatch);
@@ -586,10 +642,12 @@ function watchForConnect(slug, since) {
     if (!$("#connect-dialog").open) { clearInterval(connectWatch); return; }
     await loadConnections();
     const r = conn.retailers.find((x) => x.retailer === slug);
-    if (r && r.connected && (r.connected_at || 0) > since) {
+    const a = r && r.accounts.find((x) => x.connected && (x.connected_at || 0) > since);
+    if (a) {
       clearInterval(connectWatch);
       $("#cd-msg").className = "msg ok";
-      $("#cd-msg").textContent = "Connected" + (r.account ? " as " + r.account : "") + ". The first sync is running.";
+      $("#cd-msg").textContent = `Connected "${a.label}"` + (a.account ? " (" + a.account + ")" : "") + ". The first sync is running.";
+      loadAccounts();
       setTimeout(() => $("#connect-dialog").close(), 1500);
     }
   }, 2000);
@@ -600,7 +658,9 @@ $("#cd-open").addEventListener("click", async () => {
   // popup blockers interfere
   const w = window.open("about:blank", "groceries-connect");
   try {
-    const res = await post(`/api/connections/${connecting}/start`);
+    const label = $("#cd-label").value.trim();
+    const res = await post(`/api/connections/${connecting}/start`,
+      connectingId != null ? {account_id: connectingId} : (label ? {label} : {}));
     if (w) w.location.href = res.url; else window.open(res.url, "_blank");
     $("#cd-open-note").textContent = "Login opened in a new tab.";
     watchForConnect(connecting, Math.floor(Date.now() / 1000) - 5);
@@ -619,14 +679,23 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   const slug = b.dataset.r;
-  const r = conn.retailers.find((x) => x.retailer === slug);
-  if (b.dataset.act === "connect") openConnect(slug);
+  const id = b.dataset.id ? Number(b.dataset.id) : null;
+  const a = id != null ? allAccounts().find((x) => x.id === id) : null;
+  if (b.dataset.act === "add") openConnect(slug, null);
+  if (b.dataset.act === "connect") openConnect(slug, id);
   if (b.dataset.act === "sync") {
-    try { await post(`/api/connections/${slug}/sync`); } catch (err) { alert(err.message); }
+    try { await post(`/api/accounts/${id}/sync`); } catch (err) { alert(err.message); }
     loadConnections();
   }
-  if (b.dataset.act === "disconnect" && confirm(`Disconnect ${r.name}? This deletes the stored login on this server. Purchases already synced stay.`)) {
-    try { await post(`/api/connections/${slug}/disconnect`); } catch (err) { alert(err.message); }
+  if (b.dataset.act === "rename") {
+    const label = prompt(`New name for the ${a.name} account "${a.label}":`, a.label);
+    if (label && label.trim() !== a.label) {
+      try { await post(`/api/accounts/${id}/rename`, {label}); } catch (err) { alert(err.message); }
+      loadConnections(); loadAccounts(); load();
+    }
+  }
+  if (b.dataset.act === "disconnect" && confirm(`Disconnect ${a.name} account "${a.label}"? This deletes its stored login on this server. Purchases already synced stay.`)) {
+    try { await post(`/api/accounts/${id}/disconnect`); } catch (err) { alert(err.message); }
     loadConnections();
   }
 });
@@ -642,6 +711,16 @@ document.addEventListener("click", (e) => {
   }
 });
 $("#retailer").addEventListener("change", (e) => { retailer = e.target.value; selected = null; load(); });
+$("#account").addEventListener("change", (e) => { account = e.target.value; selected = null; load(); });
+async function loadAccounts() {
+  try {
+    accountList = await (await fetch("/api/accounts")).json();
+  } catch (_) { return; }
+  const brand = (r) => (BRAND[r] || [String(r).toUpperCase()])[0];
+  $("#account").innerHTML = `<option value="">All accounts</option>` + accountList.map((a) =>
+    `<option value="${a.id}"${String(a.id) === account ? " selected" : ""}>${esc(brand(a.retailer))} · ${esc(a.label)}</option>`).join("");
+  $("#account-wrap").hidden = accountList.length < 2;
+}
 $("#theme").addEventListener("click", () => {
   const dark = document.documentElement.dataset.theme
     ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
@@ -653,9 +732,9 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 window.addEventListener("resize", () => Object.values(charts).forEach((c) => c.resize()));
 fetch("/api/retailers").then((r) => r.json()).then((rs) => {
   $("#retailer").innerHTML = `<option value="">All</option>` + rs.map((r) => `<option value="${esc(r)}">${esc(r.toUpperCase())}</option>`).join("");
-  $("#retailer").parentElement.style.display = rs.length > 1 ? "" : "none";
+  $("#retailer-wrap").hidden = rs.length < 2;
 }).catch(() => {});
-load();
+loadAccounts().then(load);
 loadConnections();
 if (new URLSearchParams(location.search).has("connected")) {
   $("#connections").hidden = false;

@@ -1,6 +1,6 @@
 """Optional failure/recovery notifications (ntfy and/or a generic JSON webhook).
 
-One alert when a retailer's sync starts failing, one when it works again; nothing in
+One alert when a store account's sync starts failing, one when it works again; nothing in
 between, so a daily timer does not repeat the same alert every night.
 """
 
@@ -74,29 +74,43 @@ class Notifier:
         except (OSError, ValueError):
             return {}
 
-    def failed(self, retailer: str, error: str) -> None:
+    def failed(
+        self, key: str, retailer: str, error: str, account: str | None = None, legacy: str | None = None
+    ) -> None:
+        """`key` identifies the account in the state file; `account` is its label for the title."""
         state = self._load()
-        if retailer in state:
+        if key in state or (legacy and legacy in state):
             return
         reason = error.split(":", 1)[0] if error.startswith(("login needed", "RuntimeError", "HTTP")) else error
-        title = _title(self.config.alert_fail_title, retailer=retailer, reason=reason[:60])
+        title = _title(self.config.alert_fail_title, retailer=retailer, reason=reason[:60], account=account)
         if self.send(title, error[:1000], self.config.ntfy_priority, "warning") or not self.enabled:
-            state[retailer] = {"error": error[:500]}
+            state[key] = {"error": error[:500]}
             write_json_atomic(self.state_path, state, 0o644)
 
-    def succeeded(self, retailer: str, message: str) -> None:
+    def succeeded(
+        self, key: str, retailer: str, message: str, account: str | None = None, legacy: str | None = None
+    ) -> None:
+        """`legacy`: the key a single-account version used (the retailer name), resolved by the first account."""
         state = self._load()
-        if retailer not in state:
+        if key not in state and not (legacy and legacy in state):
             return
-        title = _title(self.config.alert_resolved_title, retailer=retailer, reason="")
+        title = _title(self.config.alert_resolved_title, retailer=retailer, reason="", account=account)
         if self.send(title, message, "default", "white_check_mark") or not self.enabled:
-            del state[retailer]
+            state.pop(key, None)
+            if legacy:
+                state.pop(legacy, None)
             write_json_atomic(self.state_path, state, 0o644)
 
 
-def _title(template: str, **fields: str) -> str:
-    """Fill {retailer}/{reason}; a typo in a user-supplied template must not hide the real error."""
+def _title(template: str, account: str | None = None, **fields: str) -> str:
+    """Fill {retailer}/{reason}/{account}; a typo in a user-supplied template must not hide the real error.
+
+    {account} becomes " (Label)". A template without it gets the label appended, so alerts always say
+    which store account failed.
+    """
+    suffix = f" ({account})" if account else ""
     try:
-        return template.format_map(defaultdict(str, fields))
+        title = template.format_map(defaultdict(str, {**fields, "account": suffix}))
     except (ValueError, IndexError):
-        return f"{fields.get('retailer', '')}: {template}"
+        return f"{fields.get('retailer', '')}{suffix}: {template}"
+    return title if "{account}" in template or not suffix else title + suffix

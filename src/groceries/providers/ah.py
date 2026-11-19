@@ -276,8 +276,8 @@ class TokenStore(RotatingTokenStore):
     slug = "ah"
     label = "AH"
 
-    def __init__(self, secrets_dir: Path, client: httpx.Client) -> None:
-        super().__init__(secrets_dir)
+    def __init__(self, secrets_dir: Path, client: httpx.Client, account: int | str | None = None) -> None:
+        super().__init__(secrets_dir, account)
         self.client = client
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -301,13 +301,13 @@ class AlbertHeijn(Provider):
     slug = "ah"
     display_name = "AH"
 
-    def __init__(self, config: Config, client: httpx.Client | None = None) -> None:
-        super().__init__(config)
+    def __init__(self, config: Config, client: httpx.Client | None = None, account: int | str | None = None) -> None:
+        super().__init__(config, account)
         self.client = client or httpx.Client(
             timeout=30,
             headers={"User-Agent": config.user_agent, "Content-Type": "application/json"},
         )
-        self.tokens = TokenStore(config.secrets_dir, self.client)
+        self.tokens = TokenStore(config.secrets_dir, self.client, account)
         self._last_call = 0.0
 
     # -- HTTP -----------------------------------------------------------------------------
@@ -456,6 +456,9 @@ class AlbertHeijn(Provider):
             return mask_email((self.graphql("{ member { emailAddress } }").get("member") or {}).get("emailAddress"))
         except Exception:  # noqa: BLE001  (the label is cosmetic)
             return None
+
+    def identity(self) -> str | None:
+        return (self.graphql("{ member { emailAddress } }").get("member") or {}).get("emailAddress")
 
     def interactive_login(self) -> None:
         print("1. Open this URL in a desktop browser and log in with your AH account:\n")

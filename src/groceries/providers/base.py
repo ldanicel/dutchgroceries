@@ -93,8 +93,10 @@ class Provider(abc.ABC):
     slug: str
     display_name: str
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, account: int | str | None = None) -> None:
+        """`account`: which store account's tokens to use (see accounts.py); None is the single-account layout."""
         self.config = config
+        self.account = account
 
     @abc.abstractmethod
     def check_auth(self) -> None:
@@ -123,6 +125,10 @@ class Provider(abc.ABC):
     def complete_login(self, pending: dict[str, Any], code: str) -> str | None:
         """Exchange the code, store tokens; return a masked account label for display."""
         raise NotImplementedError(f"{self.display_name} has no web login")
+
+    def identity(self) -> str | None:
+        """A stable id of the logged-in store account (member id or e-mail), to refuse connecting it twice."""
+        return None
 
     def interactive_login(self) -> None:
         raise NotImplementedError(f"{self.display_name} has no login helper")

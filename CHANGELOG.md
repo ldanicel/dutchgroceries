@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **Several accounts per supermarket**: connect more than one Albert Heijn or Jumbo account (for
+  example yours and your partner's) and see them in one household dashboard. Each account has its own
+  card under **Connections** (Sync now / Reconnect / Rename / Disconnect) and an **Add another …
+  account** button. Connecting a store account that is already connected is refused, and a reconnect
+  only accepts the account that slot belongs to.
+- **Account filter** on the dashboard: all accounts (default) or one, applied to every tile, chart and
+  table. Recent purchases show the account name when there is more than one.
+- A receipt that shows up in two accounts (a shared card) is stored once.
+- Sync covers every connected account; one failing account no longer stops the others. Alerts name the
+  account: `⚠ AH sync failed (Partner)`. Alert titles accept a new `{account}` field; templates without
+  it get the account name appended.
+- CLI: `groceries login ah --account Partner`, `groceries sync --account Partner`,
+  `groceries accounts list|rename|remove` (`remove` asks first and keeps the purchases unless `--purge`).
+- Upgrading is automatic: the existing login of each supermarket becomes its account "Main" and keeps all
+  purchases (`<retailer>-token.json` moves to `<retailer>-<id>-token.json`).
+- Fix: with only one supermarket in the data, the header hid the Connections button too.
+
 ## v1.0.0
 
 First public release.

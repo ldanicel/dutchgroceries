@@ -16,8 +16,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from . import accounts
 from .config import Config
 from .connect import COOKIE_PREFIX, DISPLAY, PENDING_TTL, ConnectError, Connections, parse_pasted
+from .db import connect
 from .providers import PROVIDERS
 
 log = logging.getLogger(__name__)
@@ -61,10 +63,46 @@ def register(app: FastAPI, config: Config, db: Callable[..., Any]) -> None:
         if not request.headers.get("content-type", "").startswith("application/json"):
             raise HTTPException(415, "JSON body required")
 
+    async def json_body(request: Request) -> dict[str, Any]:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(400, "expected a JSON object")
+        return body
+
     def known(slug: str) -> str:
         if slug not in PROVIDERS:
             raise HTTPException(404, "unknown retailer")
         return slug
+
+    def account(account_id: int) -> dict[str, Any]:
+        conn = connect(config.db_path)
+        try:
+            acc = accounts.get(conn, account_id)
+        finally:
+            conn.close()
+        if not acc or acc["status"] == "removed":
+            raise HTTPException(404, "no such account")
+        return acc
+
+    def start_sync(slug: str, account_id: int | None) -> Response:
+        if not sync_lock.acquire(blocking=False):
+            raise HTTPException(409, "a sync is already running")
+
+        def run() -> None:
+            from .sync import run_sync
+
+            try:
+                run_sync(config, slug, account=account_id)
+            except Exception:  # noqa: BLE001  (recorded in sync_runs and alerted by run_sync)
+                log.warning("sync of %s from the web UI failed", slug, exc_info=True)
+            finally:
+                sync_lock.release()
+
+        threading.Thread(target=run, name=f"sync-{slug}", daemon=True).start()
+        return JSONResponse({"started": True}, status_code=202)
 
     @app.get("/api/connections")
     def status(request: Request, conn: sqlite3.Connection = Depends(db)) -> dict[str, Any]:
@@ -74,11 +112,29 @@ def register(app: FastAPI, config: Config, db: Callable[..., Any]) -> None:
             "helper": bookmarklet(app_origin(request)),
         }
 
+    @app.get("/api/accounts")
+    def account_list(conn: sqlite3.Connection = Depends(db)) -> list[dict[str, Any]]:
+        """Accounts that own purchases or are connected, for the dashboard's account filter."""
+        return [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, retailer, label FROM accounts a WHERE status != 'removed' "
+                "OR EXISTS (SELECT 1 FROM purchases p WHERE p.account_id = a.id) ORDER BY retailer, id"
+            )
+        ]
+
     @app.post("/api/connections/{slug}/start")
-    def start(slug: str, request: Request) -> JSONResponse:
+    async def start(slug: str, request: Request) -> JSONResponse:
         check_post(request)
+        body = await json_body(request)
+        account_id = body.get("account_id")
+        if account_id is not None and (not isinstance(account_id, int) or isinstance(account_id, bool)):
+            raise HTTPException(400, "account_id must be a number")
+        label = body.get("label")
+        if label is not None and not isinstance(label, str):
+            raise HTTPException(400, "label must be text")
         try:
-            res = connections.start(known(slug))
+            res = await run_in_threadpool(connections.start, known(slug), account_id, label or None)
         except ConnectError as e:
             raise HTTPException(400, str(e)) from None
         resp = JSONResponse({"url": res["url"]})
@@ -96,12 +152,7 @@ def register(app: FastAPI, config: Config, db: Callable[..., Any]) -> None:
     @app.post("/api/connections/{slug}/finish")
     async def finish(slug: str, request: Request) -> JSONResponse:
         check_post(request)
-        try:
-            body = await request.json()
-        except ValueError:
-            body = None
-        if not isinstance(body, dict):
-            raise HTTPException(400, "expected a JSON object")
+        body = await json_body(request)
         try:
             code, returned_state = parse_pasted(str(body.get("pasted") or body.get("code") or ""))
         except ConnectError as e:
@@ -111,11 +162,11 @@ def register(app: FastAPI, config: Config, db: Callable[..., Any]) -> None:
         verifier = str(body.get("verifier") or "") or None
         try:
             # the code exchange is blocking HTTP: keep it off the event loop
-            label = await run_in_threadpool(connections.finish, known(slug), cookie, code, returned_state, verifier)
+            res = await run_in_threadpool(connections.finish, known(slug), cookie, code, returned_state, verifier)
         except ConnectError as e:
             raise HTTPException(400, str(e)) from None
-        log.info("connected %s", slug)  # never log codes or tokens
-        resp = JSONResponse({"connected": True, "account": label})
+        log.info("connected %s account %s", slug, res["account_id"])  # never log codes or tokens
+        resp = JSONResponse({"connected": True, **res})
         resp.delete_cookie(COOKIE_PREFIX + slug, path="/")
         return resp
 
@@ -153,9 +204,9 @@ go.onclick = async () => {{
   go.remove();
   if (r.ok) {{
     h.textContent = "✓ {name} connected"; h.className = "ok";
-    m.textContent = "Connected" + (j.account ? " as " + j.account : "")
-      + ". The first sync has started. You can close this tab.";
-    fetch("/api/connections/{slug}/sync", {{method: "POST",
+    m.textContent = "Connected" + (j.label ? " as \u201c" + j.label + "\u201d" : "")
+      + (j.account ? " (" + j.account + ")" : "") + ". The first sync has started. You can close this tab.";
+    fetch("/api/accounts/" + Number(j.account_id) + "/sync", {{method: "POST",
       headers: {{"Content-Type": "application/json"}}, body: "{{}}"}}).catch(() => {{}});
   }} else {{
     h.textContent = "Could not connect {name}"; h.className = "err";
@@ -165,33 +216,52 @@ go.onclick = async () => {{
 }};
 </script></body></html>"""
 
-    @app.post("/api/connections/{slug}/disconnect")
-    def disconnect(slug: str, request: Request) -> dict[str, bool]:
+    @app.post("/api/accounts/{account_id}/rename")
+    async def rename(account_id: int, request: Request) -> dict[str, Any]:
         check_post(request)
+        body = await json_body(request)
+        account(account_id)
+        conn = connect(config.db_path)
+        try:
+            label = accounts.rename(conn, account_id, body.get("label"))
+        except accounts.AccountError as e:
+            raise HTTPException(400, str(e)) from None
+        finally:
+            conn.close()
+        return {"id": account_id, "label": label}
+
+    @app.post("/api/accounts/{account_id}/disconnect")
+    def disconnect(account_id: int, request: Request) -> dict[str, bool]:
+        check_post(request)
+        account(account_id)
         if sync_lock.locked():
             raise HTTPException(409, "a sync is running; try again when it has finished")
-        connections.disconnect(known(slug))
-        log.info("disconnected %s", slug)
+        conn = connect(config.db_path)
+        try:
+            accounts.disconnect(conn, config, account_id)
+        finally:
+            conn.close()
+        log.info("disconnected account %s", account_id)
         return {"connected": False}
 
+    @app.post("/api/accounts/{account_id}/sync", status_code=202)
+    def sync_account(account_id: int, request: Request) -> Response:
+        check_post(request)
+        acc = account(account_id)
+        if not connections.is_connected(account_id):
+            raise HTTPException(409, "not connected")
+        return start_sync(acc["retailer"], account_id)
+
     @app.post("/api/connections/{slug}/sync", status_code=202)
-    def sync_now(slug: str, request: Request) -> Response:
+    def sync_retailer(slug: str, request: Request) -> Response:
+        """Every connected account of a retailer."""
         check_post(request)
         known(slug)
-        if not connections.is_connected(slug):
+        conn = connect(config.db_path)
+        try:
+            connected = [a for a in accounts.list_accounts(conn, config, slug) if a["connected"]]
+        finally:
+            conn.close()
+        if not connected:
             raise HTTPException(409, "not connected")
-        if not sync_lock.acquire(blocking=False):
-            raise HTTPException(409, "a sync is already running")
-
-        def run() -> None:
-            from .sync import run_sync
-
-            try:
-                run_sync(config, slug)
-            except Exception:  # noqa: BLE001  (recorded in sync_runs and alerted by run_sync)
-                log.warning("sync of %s from the web UI failed", slug, exc_info=True)
-            finally:
-                sync_lock.release()
-
-        threading.Thread(target=run, name=f"sync-{slug}", daemon=True).start()
-        return JSONResponse({"started": True}, status_code=202)
+        return start_sync(slug, None)

@@ -22,20 +22,34 @@ _SPEND = """(p.total - COALESCE((SELECT SUM(amount) FROM purchase_lines s
               WHERE s.purchase_id = p.id AND s.product_key IN ('stamps')), 0))"""
 
 
-def _filter(retailer: str | None, alias: str = "p") -> tuple[str, list[Any]]:
-    return (f" AND {alias}.retailer = ?", [retailer]) if retailer else ("", [])
-
-
 class Analytics:
-    def __init__(self, conn: sqlite3.Connection, retailer: str | None = None) -> None:
+    def __init__(self, conn: sqlite3.Connection, retailer: str | None = None, account: int | None = None) -> None:
+        """`account`: only purchases synced from that store account (bank imports have no account, so
+        they are left out then)."""
         self.conn = conn
         self.retailer = retailer
+        self.account = account
+
+    def _filter(self, alias: str = "p") -> tuple[str, list[Any]]:
+        sql, args = "", []
+        if self.retailer:
+            sql, args = f" AND {alias}.retailer = ?", [self.retailer]
+        if self.account is not None:
+            if alias == "p":
+                sql += " AND p.account_id = ?"
+            elif alias == "b":
+                sql += " AND 0"  # bank payments belong to no store account
+            else:
+                sql += f" AND {alias}.purchase_id IN (SELECT id FROM purchases WHERE account_id = ?)"
+            if alias != "b":
+                args.append(self.account)
+        return sql, args
 
     def _rows(self, sql: str, params: list[Any] | tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         return [dict(r) for r in self.conn.execute(sql, params)]
 
     def overview(self) -> dict[str, Any]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         row = self._rows(
             f"""SELECT COUNT(*) AS purchases, MIN(local_date) AS first, MAX(local_date) AS last,
                        ROUND(SUM({_SPEND}), 2) AS spend, ROUND(SUM(discount_total), 2) AS saved,
@@ -94,7 +108,7 @@ class Analytics:
 
     def bank_months(self) -> list[dict[str, Any]]:
         """Bank payments per month, only for dates before that retailer's first receipt or order."""
-        f, a = _filter(self.retailer, "b")
+        f, a = self._filter("b")
         return self._rows(
             f"""SELECT substr(b.date, 1, 7) AS month, ROUND(SUM(b.amount), 2) AS bank, COUNT(*) AS payments
                 FROM bank_payments b
@@ -105,7 +119,7 @@ class Analytics:
         )
 
     def _receipt_months(self) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         return self._rows(
             f"""SELECT substr(local_date, 1, 7) AS month,
                        ROUND(SUM({_SPEND}), 2) AS spend,
@@ -120,7 +134,7 @@ class Analytics:
         )
 
     def categories(self) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         return self._rows(
             f"""SELECT COALESCE(pr.category, '{UNKNOWN}') AS category, ROUND(SUM(l.amount), 2) AS spend,
                        COUNT(*) AS lines, COUNT(DISTINCT l.product_key) AS products
@@ -133,7 +147,7 @@ class Analytics:
 
     def category_months(self, top: int = 8) -> dict[str, Any]:
         cats = [c["category"] for c in self.categories()[:top]]
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         rows = self._rows(
             f"""SELECT substr(p.local_date, 1, 7) AS month, COALESCE(pr.category, '{UNKNOWN}') AS category,
                        ROUND(SUM(l.amount), 2) AS spend
@@ -154,7 +168,7 @@ class Analytics:
         }
 
     def products(self, order: str = "spend", limit: int = 25) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         col = {"spend": "spend", "count": "times"}.get(order, "spend")
         return self._rows(
             f"""SELECT l.retailer, l.product_key, COALESCE(pr.title, MAX(l.name)) AS name, pr.brand,
@@ -183,11 +197,12 @@ class Analytics:
         info = self._rows("SELECT * FROM products WHERE retailer = ? AND product_key = ?", (retailer, product_key))
         product = info[0] if info else {"product_key": product_key}
         rows = self._rows(
-            """SELECT p.local_date AS date, l.unit_price, l.weight, l.weight_unit, l.quantity, l.amount, l.is_bonus,
+            f"""SELECT p.local_date AS date, l.unit_price, l.weight, l.weight_unit, l.quantity, l.amount, l.is_bonus,
                       l.qty_inferred, p.channel, p.retailer, p.store_street, p.store_city
                FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
-               WHERE l.retailer = ? AND l.product_key = ? AND l.unit_price > 0 ORDER BY p.ts_utc""",
-            (retailer, product_key),
+               WHERE l.retailer = ? AND l.product_key = ? AND l.unit_price > 0
+               {"AND p.account_id = ?" if self.account is not None else ""} ORDER BY p.ts_utc""",
+            (retailer, product_key, *([self.account] if self.account is not None else [])),
         )
         size = (product.get("unit_size") or "").strip().lower()
         pack_kg = _pack_kg(size)
@@ -252,7 +267,7 @@ class Analytics:
         Compares the median listed price in the first and in the latest month that has data,
         which smooths out single-day promotions.
         """
-        f, a = _filter(self.retailer, "l")
+        f, a = self._filter("l")
         top = self._rows(
             f"""SELECT l.retailer, l.product_key, COALESCE(pr.title, MAX(l.name)) AS name, SUM(l.amount) AS spend,
                        COUNT(DISTINCT l.purchase_id) AS times
@@ -292,7 +307,7 @@ class Analytics:
 
     def price_changes(self, min_points: int = 4, min_days: int = 120, limit: int = 25) -> list[dict[str, Any]]:
         """Compare the median shelf price of a product's first and last ~quarter of observations."""
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         rows = self.conn.execute(
             f"""SELECT l.retailer, l.product_key, COALESCE(pr.title, l.name) AS name, l.weight_unit,
                        p.local_date, l.unit_price
@@ -337,7 +352,7 @@ class Analytics:
 
     def inflation(self) -> list[dict[str, Any]]:
         """Monthly basket index: mean price ratio vs each product's first observed price."""
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         rows = self.conn.execute(
             f"""SELECT l.retailer || ':' || l.product_key AS k, substr(p.local_date, 1, 7) AS month, l.unit_price
                 FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
@@ -355,7 +370,7 @@ class Analytics:
         ]
 
     def stores(self) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         return self._rows(
             f"""SELECT retailer, store_id, MAX(store_street) AS street, MAX(store_postcode) AS postcode,
                        MAX(store_city) AS city, COUNT(*) AS visits, ROUND(SUM({_SPEND}), 2) AS spend,
@@ -366,7 +381,7 @@ class Analytics:
         )
 
     def weekdays(self) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         return self._rows(
             f"""SELECT CAST(strftime('%w', local_date) AS INTEGER) AS dow, COUNT(*) AS baskets,
                        ROUND(SUM({_SPEND}), 2) AS spend FROM purchases p WHERE 1=1 {f} GROUP BY dow ORDER BY dow""",
@@ -374,7 +389,7 @@ class Analytics:
         )
 
     def discounts_by_type(self) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         return self._rows(
             f"""SELECT COALESCE(d.type, '?') AS type, COUNT(*) AS n, ROUND(SUM(d.amount), 2) AS saved
                 FROM discounts d JOIN purchases p ON p.id = d.purchase_id WHERE 1=1 {f}
@@ -383,10 +398,11 @@ class Analytics:
         )
 
     def purchases(self, limit: int = 50) -> list[dict[str, Any]]:
-        f, a = _filter(self.retailer)
+        f, a = self._filter()
         return self._rows(
-            f"""SELECT id, retailer, channel, local_date, store_street, store_city, ROUND({_SPEND}, 2) AS spend,
-                       discount_total AS saved, item_count FROM purchases p WHERE 1=1 {f}
+            f"""SELECT p.id, p.retailer, p.account_id, a.label AS account, channel, local_date, store_street,
+                       store_city, ROUND({_SPEND}, 2) AS spend, discount_total AS saved, item_count
+                FROM purchases p LEFT JOIN accounts a ON a.id = p.account_id WHERE 1=1 {f}
                 ORDER BY ts_utc DESC LIMIT ?""",
             [*a, limit],
         )

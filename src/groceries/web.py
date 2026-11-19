@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from .accounts import migrate_legacy
 from .analytics import Analytics
 from .config import Config
 from .db import connect
@@ -55,7 +56,9 @@ ECHARTS_SRI = "sha384-Mx5lkUEQPM1pOJCwFtUICyX45KNojXbkWdYhkKUKsbv391mavbfoAmONbz
 
 def create_app(config: Config) -> FastAPI:
     app = FastAPI(title="groceries", docs_url=None, redoc_url=None, openapi_url=None)
-    connect(config.db_path).close()  # create/migrate the schema once at startup
+    conn = connect(config.db_path)  # create/migrate the schema (and single-account logins) once at startup
+    migrate_legacy(conn, config)
+    conn.close()
     page = resources.files("groceries").joinpath("static/index.html").read_text()
     page = page.replace("{{ECHARTS_URL}}", html.escape(config.echarts_url))
     # pin the default CDN file by hash; a self-hosted copy (GROCERIES_ECHARTS_URL) is trusted as is
@@ -125,8 +128,10 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
-    def analytics(retailer: str | None = Query(None), conn: sqlite3.Connection = Depends(db)) -> Analytics:
-        return Analytics(conn, retailer or None)
+    def analytics(
+        retailer: str | None = Query(None), account: int | None = Query(None), conn: sqlite3.Connection = Depends(db)
+    ) -> Analytics:
+        return Analytics(conn, retailer or None, account)
 
     register_connections(app, config, db)
 
@@ -174,8 +179,10 @@ def create_app(config: Config) -> FastAPI:
         return a.price_changes(min_points, min_days, limit)
 
     @app.get("/api/price-history")
-    def price_history(retailer: str, key: str, conn: sqlite3.Connection = Depends(db)) -> dict[str, Any]:
-        return Analytics(conn).price_history(retailer, key)
+    def price_history(
+        retailer: str, key: str, account: int | None = Query(None), conn: sqlite3.Connection = Depends(db)
+    ) -> dict[str, Any]:
+        return Analytics(conn, account=account).price_history(retailer, key)
 
     @app.get("/api/market-changes")
     def market_changes(

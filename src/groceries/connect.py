@@ -7,18 +7,26 @@ comes back (the Connect helper sends the login tab to /connect/callback, or it i
 accepted in a same-origin request carrying that cookie, and, where the retailer echoes it
 (Jumbo), with the same OAuth state. Codes are exchanged server-side; tokens never leave the
 secrets dir.
+
+The pending login also records which account slot it is for (an existing account being
+reconnected, or a new one), so a code can only ever land in that slot. Codes are exchanged into
+a staging file first; a login that turns out to be a store account that is already connected
+is refused and discarded.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import time
 from pathlib import Path
 from typing import Any
 
+from . import accounts
 from .config import Config
+from .db import connect
 from .providers import PROVIDERS, get_provider
 from .providers.base import AuthError
 from .storage import ensure_private_dir, file_lock, write_json_atomic
@@ -64,19 +72,41 @@ def parse_pasted(pasted: str) -> tuple[str, str | None]:
 class Connections:
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.labels_path = config.data_dir / "connections.json"
+
+    def _db(self) -> Any:
+        conn = connect(self.config.db_path)
+        accounts.migrate_legacy(conn, self.config)
+        return conn
 
     # -- pending logins ---------------------------------------------------------------------------
     def _pending_path(self, slug: str) -> Path:
         return self.config.secrets_dir / f"{slug}-weblogin.json"
 
-    def start(self, slug: str) -> dict[str, str]:
+    def start(self, slug: str, account_id: int | None = None, label: str | None = None) -> dict[str, str]:
+        """Begin a login for an existing account slot (reconnect) or for a new account (`account_id` None).
+        The slot is kept server-side with the state, so the code that comes back can only land there."""
         if slug not in PROVIDERS:
             raise ConnectError(f"unknown retailer {slug}")
+        conn = self._db()
+        try:
+            if account_id is not None:
+                acc = accounts.get(conn, account_id)
+                if not acc or acc["retailer"] != slug or acc["status"] == "removed":
+                    raise ConnectError("no such account")
+            elif label is not None:
+                label = accounts.clean_label(label)
+                accounts._check_free(conn, slug, label)
+        except accounts.AccountError as e:
+            raise ConnectError(str(e)) from None
+        finally:
+            conn.close()
         state = secrets.token_urlsafe(24)
         url, private = get_provider(slug, self.config).begin_login(state)
         ensure_private_dir(self.config.secrets_dir)
-        write_json_atomic(self._pending_path(slug), {"state": state, "created": int(time.time()), **private})
+        write_json_atomic(
+            self._pending_path(slug),
+            {"state": state, "created": int(time.time()), "account_id": account_id, "label": label, **private},
+        )
         return {"url": url, "state": state}
 
     def finish(
@@ -86,7 +116,7 @@ class Connections:
         code: str,
         returned_state: str | None = None,
         verifier: str | None = None,
-    ) -> str | None:
+    ) -> dict[str, Any]:
         """`verifier`: the Connect helper may run its own PKCE authorization in the already logged-in
         retailer session and send its verifier along; the cookie check still binds it to this login."""
         path = self._pending_path(slug)
@@ -107,67 +137,113 @@ class Connections:
             if not 32 <= len(verifier) <= 128:
                 raise ConnectError("invalid PKCE verifier")
             pending = {**pending, "verifier": verifier}
+        # exchange into a staging token file: a login that turns out to be a duplicate must not replace anything
+        staging = f"staging-{secrets.token_hex(6)}"
+        provider = get_provider(slug, self.config, account=staging)
         try:
-            label = get_provider(slug, self.config).complete_login(pending, code)
-        except AuthError as e:
-            raise ConnectError(str(e)) from None
+            try:
+                display = provider.complete_login(pending, code)
+            except AuthError as e:
+                raise ConnectError(str(e)) from None
+            finally:
+                path.unlink(missing_ok=True)  # codes are single-use either way
+            try:
+                identity = accounts.identity_hash(slug, provider.identity())
+            except Exception:  # noqa: BLE001  (without it duplicates cannot be detected, but the login works)
+                identity = None
+            return self._attach(slug, pending.get("account_id"), pending.get("label"), staging, display, identity)
         finally:
-            path.unlink(missing_ok=True)  # codes are single-use either way
-        self._set_label(slug, label)
-        return label
+            for name in (f"{slug}-{staging}-token.json", f"{slug}-{staging}-token.lock"):
+                (self.config.secrets_dir / name).unlink(missing_ok=True)
+
+    def _attach(
+        self,
+        slug: str,
+        account_id: int | None,
+        label: str | None,
+        staging: str,
+        display: str | None,
+        identity: str | None,
+    ) -> dict[str, Any]:
+        name = DISPLAY.get(slug, slug)
+        conn = self._db()
+        try:
+            dup = accounts.duplicate_of(conn, slug, identity, account_id or -1)
+            if dup and dup["status"] != "removed":
+                raise ConnectError(
+                    f'this {name} login is already connected as "{dup["label"]}". To add another account, '
+                    f"log out of {name} first or use a private window, then try again"
+                )
+            if account_id is not None:
+                acc = accounts.get(conn, account_id)
+                if not acc:
+                    raise ConnectError("the account was removed while logging in; start again")
+                if identity and acc["identity"] and acc["identity"] != identity:
+                    raise ConnectError(
+                        f'you logged in to a different {name} account than "{acc["label"]}". '
+                        f'Log in as that account, or use "Add another {name} account"'
+                    )
+            else:
+                if dup:  # a removed account logs in again: bring it back with its purchases
+                    account_id = dup["id"]
+                else:
+                    try:
+                        account_id = accounts.create(conn, slug, label)
+                    except accounts.AccountError as e:
+                        raise ConnectError(str(e)) from None
+            staged = self.config.secrets_dir / f"{slug}-{staging}-token.json"
+            with file_lock(accounts.token_lock(self.config, slug, account_id)):
+                os.replace(staged, accounts.token_path(self.config, slug, account_id))
+            with conn:
+                conn.execute(
+                    "UPDATE accounts SET display = COALESCE(?, display), identity = COALESCE(?, identity), "
+                    "connected_at = ?, status = 'connected' WHERE id = ?",
+                    (display, identity, int(time.time()), account_id),
+                )
+            acc = accounts.get(conn, account_id) or {}
+            return {"account_id": account_id, "label": acc.get("label"), "account": acc.get("display")}
+        finally:
+            conn.close()
 
     # -- status -----------------------------------------------------------------------------------
-    def _labels(self) -> dict[str, Any]:
+    def is_connected(self, account_id: int) -> bool:
+        conn = self._db()
         try:
-            return json.loads(self.labels_path.read_text())
-        except (OSError, ValueError):
-            return {}
-
-    def _set_label(self, slug: str, label: str | None) -> None:
-        labels = self._labels()
-        labels[slug] = {"account": label, "connected_at": int(time.time())}
-        write_json_atomic(self.labels_path, labels, 0o644)
-
-    def disconnect(self, slug: str) -> None:
-        if slug not in PROVIDERS:
-            raise ConnectError(f"unknown retailer {slug}")
-        lock = self.config.secrets_dir / f"{slug}-token.lock"
-        with file_lock(lock):  # wait for a token refresh in progress, or it would write the file back
-            for name in (f"{slug}-token.json", f"{slug}-weblogin.json", f"{slug}-login.json"):
-                (self.config.secrets_dir / name).unlink(missing_ok=True)
-        labels = self._labels()
-        labels.pop(slug, None)
-        write_json_atomic(self.labels_path, labels, 0o644)
-
-    def is_connected(self, slug: str) -> bool:
-        return (self.config.secrets_dir / f"{slug}-token.json").is_file()
+            acc = accounts.get(conn, account_id)
+        finally:
+            conn.close()
+        return bool(acc) and accounts.token_path(self.config, acc["retailer"], account_id).is_file()
 
     def status(self, conn: Any) -> list[dict[str, Any]]:
-        labels = self._labels()
         out = []
         for slug in PROVIDERS:
-            last = conn.execute(
-                "SELECT started_at, finished_at, status, message FROM sync_runs WHERE retailer = ? ORDER BY id DESC "
-                "LIMIT 1",
-                (slug,),
-            ).fetchone()
-            count = conn.execute(
-                "SELECT COUNT(*), MIN(local_date), MAX(local_date) FROM purchases WHERE retailer = ?", (slug,)
-            ).fetchone()
-            connected = self.is_connected(slug)
-            needs = bool(last and last["status"] == "error" and (last["message"] or "").startswith("login needed"))
-            out.append(
-                {
-                    "retailer": slug,
-                    "name": DISPLAY.get(slug, slug),
-                    "connected": connected,
-                    "needs_reconnect": connected and needs,
-                    "account": (labels.get(slug) or {}).get("account"),
-                    "connected_at": (labels.get(slug) or {}).get("connected_at"),
-                    "last_sync": dict(last) if last else None,
-                    "purchases": count[0],
-                    "first": count[1],
-                    "last": count[2],
-                }
-            )
+            items = []
+            for a in accounts.list_accounts(conn, self.config, slug):
+                if a["status"] == "removed":
+                    continue
+                last = conn.execute(
+                    "SELECT started_at, finished_at, status, message FROM sync_runs WHERE account_id = ? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (a["id"],),
+                ).fetchone()
+                count = conn.execute(
+                    "SELECT COUNT(*), MIN(local_date), MAX(local_date) FROM purchases WHERE account_id = ?",
+                    (a["id"],),
+                ).fetchone()
+                needs = bool(last and last["status"] == "error" and (last["message"] or "").startswith("login needed"))
+                items.append(
+                    {
+                        "id": a["id"],
+                        "label": a["label"],
+                        "account": a["display"],
+                        "connected": a["connected"],
+                        "needs_reconnect": a["connected"] and needs,
+                        "connected_at": a["connected_at"],
+                        "last_sync": dict(last) if last else None,
+                        "purchases": count[0],
+                        "first": count[1],
+                        "last": count[2],
+                    }
+                )
+            out.append({"retailer": slug, "name": DISPLAY.get(slug, slug), "accounts": items})
         return out

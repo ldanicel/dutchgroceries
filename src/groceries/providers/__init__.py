@@ -6,24 +6,24 @@ from ..config import Config
 from .base import Provider
 
 
-def _ah(config: Config) -> Provider:
+def _ah(config: Config, account: int | str | None = None) -> Provider:
     from .ah import AlbertHeijn
 
-    return AlbertHeijn(config)
+    return AlbertHeijn(config, account=account)
 
 
-def _jumbo(config: Config) -> Provider:
+def _jumbo(config: Config, account: int | str | None = None) -> Provider:
     from .jumbo import Jumbo
 
-    return Jumbo(config)
+    return Jumbo(config, account=account)
 
 
 PROVIDERS = {"ah": _ah, "jumbo": _jumbo}
 
 
-def get_provider(slug: str, config: Config) -> Provider:
+def get_provider(slug: str, config: Config, account: int | str | None = None) -> Provider:
     try:
         factory = PROVIDERS[slug]
     except KeyError:
         raise ValueError(f"unknown retailer {slug!r}; known: {', '.join(PROVIDERS)}") from None
-    return factory(config)
+    return factory(config, account=account)
