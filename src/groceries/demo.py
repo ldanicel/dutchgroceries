@@ -39,6 +39,12 @@ STORES = {
     "ah": [("9001", "Voorbeeldstraat 1", "1234AB", "Demostad"), ("9002", "Proefplein 12", "1234CD", "Demostad")],
     "jumbo": [("9101", "Testlaan 7", "5678EF", "Demodorp")],
 }
+# (retailer, label, masked login, share of the retailer's purchases): a two-person household
+ACCOUNTS = [
+    ("ah", "Main", "m***@example.com", 0.7),
+    ("ah", "Sam", "s***@example.com", 0.3),
+    ("jumbo", "Main", "m***@example.com", 1.0),
+]
 
 
 def _price(base: float, inflation: float, day: date, start: date) -> float:
@@ -55,6 +61,14 @@ def seed(data_dir: Path, months: int = 24, rng_seed: int = 7) -> dict[str, int]:
     end = date.today()
     start = end - timedelta(days=months * 30)
     counts = {"purchases": 0, "market_prices": 0, "bank_payments": 0}
+    with conn:
+        accounts = {
+            (retailer, label): conn.execute(
+                "INSERT INTO accounts (retailer, label, display, connected_at) VALUES (?, ?, ?, ?)",
+                (retailer, label, display, int(datetime.now(UTC).timestamp()) - 3 * 86400),
+            ).lastrowid
+            for retailer, label, display, _share in ACCOUNTS
+        }
     day, n = start, 0
     while day <= end:
         for retailer, every in (("ah", 2), ("jumbo", 9)):
@@ -79,6 +93,13 @@ def seed(data_dir: Path, months: int = 24, rng_seed: int = 7) -> dict[str, int]:
                 continue
             gross = sum(ln.amount for ln in lines)
             saved = round(gross * rng.uniform(0, 0.12), 2)
+            stamps = round(gross * 0.1, 1) if retailer == "ah" and rng.random() < 0.3 else 0
+            if stamps:  # savings stamps bought at the till: in the receipt total, not in spend
+                lines.append(Line(name="Koopzegels", amount=stamps, quantity=1, product_key="stamps"))
+            owner = rng.choices(
+                [label for r, label, _d, _s in ACCOUNTS if r == retailer],
+                [share for r, _l, _d, share in ACCOUNTS if r == retailer],
+            )[0]
             store = rng.choice(STORES[retailer])
             n += 1
             ts = datetime(day.year, day.month, day.day, 16, rng.randint(0, 59), tzinfo=UTC)
@@ -89,10 +110,10 @@ def seed(data_dir: Path, months: int = 24, rng_seed: int = 7) -> dict[str, int]:
                     channel="online" if retailer == "ah" and n % 25 == 0 else "store",
                     external_id=f"demo-{retailer}-{n:05d}",
                     ts_utc=ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    total=round(gross - saved, 2),
+                    total=round(gross - saved + stamps, 2),
                     lines=lines,
                     discounts=[Discount(amount=saved, name="Bonus", type="BONUS")] if saved else [],
-                    payments=[Payment(method="PIN", amount=round(gross - saved, 2))],
+                    payments=[Payment(method="PIN", amount=round(gross - saved + stamps, 2))],
                     store_id=store[0],
                     store_street=store[1],
                     store_postcode=store[2],
@@ -100,6 +121,7 @@ def seed(data_dir: Path, months: int = 24, rng_seed: int = 7) -> dict[str, int]:
                 ),
                 "Europe/Amsterdam",
                 None,
+                accounts[(retailer, owner)],
             )
             counts["purchases"] += 1
         day += timedelta(days=1)
@@ -127,9 +149,11 @@ def seed(data_dir: Path, months: int = 24, rng_seed: int = 7) -> dict[str, int]:
             )
             counts["bank_payments"] += 1
             d += timedelta(days=4)
-        conn.execute(
-            "INSERT INTO sync_runs (retailer, started_at, finished_at, status, message) VALUES "
-            "('ah', ?, ?, 'ok', 'demo data')",
-            (datetime.now(UTC).isoformat(timespec="seconds"),) * 2,
-        )
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        for (retailer, _label), account_id in accounts.items():
+            conn.execute(
+                "INSERT INTO sync_runs (retailer, account_id, started_at, finished_at, status, new_purchases, message) "
+                "VALUES (?, ?, ?, ?, 'ok', 0, 'demo data')",
+                (retailer, account_id, now, now),
+            )
     return counts

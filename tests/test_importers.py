@@ -168,5 +168,11 @@ def test_demo_seed_is_synthetic_and_refuses_real_db(config: Config) -> None:
     a = Analytics(connect(config.db_path))
     assert a.overview()["purchases"] == counts["purchases"]
     assert all(p["name"].startswith("Demo ") for p in a.products("spend", 50))
+    conn = connect(config.db_path)
+    labels = {tuple(r) for r in conn.execute("SELECT retailer, label FROM accounts")}
+    assert labels == {("ah", "Main"), ("ah", "Sam"), ("jumbo", "Main")}
+    ah_owners = conn.execute("SELECT COUNT(DISTINCT account_id) FROM purchases WHERE retailer = 'ah'").fetchone()[0]
+    assert ah_owners == 2
+    assert conn.execute("SELECT COUNT(*) FROM purchases WHERE account_id IS NULL").fetchone()[0] == 0
     with pytest.raises(SystemExit):
         seed(config.data_dir)

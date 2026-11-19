@@ -9,9 +9,12 @@ change over time.
 > undocumented APIs behind the retailers' own apps. They can change or disappear at any time. Use it for
 > your own accounts and for personal use only, keep the request rate low, and use it at your own risk.
 
-![Dashboard with synthetic demo data](docs/screenshot.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="Dashboard with synthetic demo data" src="docs/screenshot.png">
+</picture>
 
-*The screenshot shows made-up demo data (`groceries demo-seed`).*
+*Screenshots show made-up demo data (`groceries demo-seed`).*
 
 ## Contents
 
@@ -105,8 +108,8 @@ GROCERIES_DATA_DIR=./demo .venv/bin/groceries demo-seed
 GROCERIES_DATA_DIR=./demo .venv/bin/groceries serve
 ```
 
-`demo-seed` fills an empty data directory with made-up purchases, so you can look around without an
-account.
+`demo-seed` fills an empty data directory with made-up purchases from two made-up Albert Heijn
+accounts (*Main* and *Sam*) and one Jumbo account, so you can look around without an account.
 
 ## Connecting Albert Heijn and Jumbo
 
@@ -144,6 +147,11 @@ that other account. Your browser is probably still logged in to the first accoun
 hand out *its* code again, so first log out on ah.nl / jumbo.com, or open the dashboard in a private
 window for this. The app refuses a login for a store account that is already connected, and a
 **Reconnect** only accepts the account that card belongs to.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/connections-dark.png">
+  <img alt="Connections panel with two Albert Heijn accounts and one Jumbo account (demo data)" src="docs/connections.png">
+</picture>
 
 All accounts are synced and shown together; pick one in the **Account** menu at the top to see only its
 purchases (bank imports are not tied to an account, so they only show under *All accounts*). A receipt

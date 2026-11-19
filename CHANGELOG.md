@@ -18,6 +18,11 @@
 - Upgrading is automatic: the existing login of each supermarket becomes its account "Main" and keeps all
   purchases (`<retailer>-token.json` moves to `<retailer>-<id>-token.json`).
 - Fix: with only one supermarket in the data, the header hid the Connections button too.
+- Summary cards: fixed label / value / sub-text rows, so every value lines up across the row at any
+  width; shorter labels and sub-texts (full explanation in the tooltip). Savings stamps moved from
+  *Products* to the *Bonus savings* card.
+- `demo-seed` creates two AH accounts and one Jumbo account, and some savings stamps; README screenshots
+  refreshed (light and dark, including Connections).
 
 ## v1.0.0
 
