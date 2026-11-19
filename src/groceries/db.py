@@ -1,7 +1,8 @@
 """SQLite schema shared by all retailers.
 
 Every row carries a ``retailer`` slug (``ah``, ``jumbo``, ...). Purchases are in-store
-receipts and online orders alike, told apart by ``channel``.
+receipts and online orders alike, told apart by ``channel``. A retailer can have several
+store accounts (a household); each purchase records the account it was synced from.
 """
 
 from __future__ import annotations
@@ -12,6 +13,20 @@ from pathlib import Path
 from .storage import ensure_private_dir
 
 SCHEMA = """
+-- Store accounts (an AH or Jumbo login). Several per retailer; tokens live in the secrets dir, never here.
+CREATE TABLE IF NOT EXISTS accounts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    retailer     TEXT NOT NULL,
+    label        TEXT NOT NULL,               -- shown in the UI, editable ("Main", "Partner")
+    display      TEXT,                        -- masked e-mail address from the retailer
+    identity     TEXT,                        -- sha256 of the retailer's member id/e-mail: refuses duplicates
+    status       TEXT NOT NULL DEFAULT 'connected',  -- 'connected' | 'disconnected'
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    connected_at INTEGER,                     -- unix time of the last login
+    last_sync    TEXT,
+    UNIQUE (retailer, label)
+);
+
 CREATE TABLE IF NOT EXISTS purchases (
     id             TEXT PRIMARY KEY,          -- '<retailer>:<channel>:<external id>'
     retailer       TEXT NOT NULL,
@@ -29,6 +44,7 @@ CREATE TABLE IF NOT EXISTS purchases (
     status         TEXT,
     raw_file       TEXT,
     synced_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    account_id     INTEGER REFERENCES accounts (id),  -- the account that first synced it
     UNIQUE (retailer, channel, external_id)
 );
 CREATE INDEX IF NOT EXISTS purchases_date ON purchases (local_date);
@@ -118,6 +134,7 @@ CREATE INDEX IF NOT EXISTS bank_payments_date ON bank_payments (retailer, date);
 CREATE TABLE IF NOT EXISTS sync_runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     retailer      TEXT NOT NULL,
+    account_id    INTEGER,
     started_at    TEXT NOT NULL,
     finished_at   TEXT,
     status        TEXT,
@@ -134,14 +151,53 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    _migrate_columns(conn)  # before SCHEMA: its indexes may name columns an old database lacks
     conn.executescript(SCHEMA)
     _migrate(conn)
     return conn
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    for table, col, ddl in (
+        ("purchases", "account_id", "INTEGER REFERENCES accounts (id)"),
+        ("sync_runs", "account_id", "INTEGER"),
+    ):
+        cols = _columns(conn, table)
+        if cols and col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE INDEX IF NOT EXISTS purchases_account ON purchases (account_id)")
+    # single-account databases: every retailer with purchases gets one account, "Main", that owns them
+    with conn:
+        for (retailer,) in conn.execute(
+            "SELECT DISTINCT retailer FROM purchases WHERE account_id IS NULL "
+            "UNION SELECT DISTINCT retailer FROM sync_runs WHERE account_id IS NULL"
+        ).fetchall():
+            row = conn.execute("SELECT id FROM accounts WHERE retailer = ? ORDER BY id LIMIT 1", (retailer,)).fetchone()
+            account_id = row[0] if row else main_account(conn, retailer)
+            conn.execute(
+                "UPDATE purchases SET account_id = ? WHERE retailer = ? AND account_id IS NULL", (account_id, retailer)
+            )
+            conn.execute(
+                "UPDATE sync_runs SET account_id = ? WHERE retailer = ? AND account_id IS NULL", (account_id, retailer)
+            )
     if "qty_inferred" not in {r["name"] for r in conn.execute("PRAGMA table_info(purchase_lines)")}:
         conn.execute("ALTER TABLE purchase_lines ADD COLUMN qty_inferred INTEGER NOT NULL DEFAULT 0")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(products)")}
     if "category_inferred" not in cols:
         conn.execute("ALTER TABLE products ADD COLUMN category_inferred INTEGER NOT NULL DEFAULT 0")
+
+
+def main_account(conn: sqlite3.Connection, retailer: str) -> int:
+    """Create the first account of a retailer (label "Main") and return its id."""
+    return int(
+        conn.execute(
+            "INSERT INTO accounts (retailer, label, status) VALUES (?, 'Main', 'connected')", (retailer,)
+        ).lastrowid
+    )

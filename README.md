@@ -9,9 +9,12 @@ change over time.
 > undocumented APIs behind the retailers' own apps. They can change or disappear at any time. Use it for
 > your own accounts and for personal use only, keep the request rate low, and use it at your own risk.
 
-![Dashboard with synthetic demo data](docs/screenshot.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="Dashboard with synthetic demo data" src="docs/screenshot.png">
+</picture>
 
-*The screenshot shows made-up demo data (`groceries demo-seed`).*
+*Screenshots show made-up demo data (`groceries demo-seed`).*
 
 ## Contents
 
@@ -40,8 +43,10 @@ change over time.
   top products, price history per product with a regular-price line built from your own receipts,
   biggest price changes, a personal price index, Bonus and discount savings, basket size, stores,
   recent purchases.
-- **Connect from the browser**: a card per supermarket with Connect, Sync now, Reconnect and Disconnect.
+- **Connect from the browser**: a card per account with Connect, Sync now, Reconnect, Rename and Disconnect.
   Your password never reaches this app.
+- **A whole household**: connect several Albert Heijn or Jumbo accounts (yours, your partner's) and see
+  them together, or filter the dashboard to one account.
 - **Optional extras**: public shelf prices since November 2022 for the products you buy, supermarket
   payments from a bank CSV export (for the years before your receipts), and ntfy or webhook alerts when
   a sync starts failing.
@@ -103,8 +108,8 @@ GROCERIES_DATA_DIR=./demo .venv/bin/groceries demo-seed
 GROCERIES_DATA_DIR=./demo .venv/bin/groceries serve
 ```
 
-`demo-seed` fills an empty data directory with made-up purchases, so you can look around without an
-account.
+`demo-seed` fills an empty data directory with made-up purchases from two made-up Albert Heijn
+accounts (*Main* and *Sam*) and one Jumbo account, so you can look around without an account.
 
 ## Connecting Albert Heijn and Jumbo
 
@@ -131,9 +136,26 @@ Copy that whole line, paste it in the dialog and click **Connect**. Codes expire
 **Headless servers** can use the command line instead: `groceries login ah` or `groceries login jumbo`
 prints the login URL and asks for the pasted redirect. With Docker: `docker compose run --rm web login ah`.
 
-The **Connections** panel shows each account (masked e-mail), the last sync and the number of
-purchases, with **Sync now**, **Reconnect** and **Disconnect** (deletes the stored login; synced
-purchases stay). When a login expires, the card says **Needs reconnect** and a banner appears.
+The **Connections** panel shows each account (its name, masked e-mail, last sync and number of
+purchases), with **Sync now**, **Reconnect**, **Rename** and **Disconnect** (deletes the stored login;
+synced purchases stay). When a login expires, the card says **Needs reconnect** and a banner appears.
+
+### More than one account per supermarket
+
+Click **+ Add another Albert Heijn account** (or Jumbo), give it a name such as *Partner* and log in with
+that other account. Your browser is probably still logged in to the first account, and the retailer would
+hand out *its* code again, so first log out on ah.nl / jumbo.com, or open the dashboard in a private
+window for this. The app refuses a login for a store account that is already connected, and a
+**Reconnect** only accepts the account that card belongs to.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/connections-dark.png">
+  <img alt="Connections panel with two Albert Heijn accounts and one Jumbo account (demo data)" src="docs/connections.png">
+</picture>
+
+All accounts are synced and shown together; pick one in the **Account** menu at the top to see only its
+purchases (bank imports are not tied to an account, so they only show under *All accounts*). A receipt
+that appears in two accounts is stored once. From a terminal: `groceries login ah --account Partner`.
 
 ## Configuration
 
@@ -161,8 +183,8 @@ to (the systemd units do this); [`.env.example`](.env.example) lists them all, c
 | `GROCERIES_NTFY_TOKEN` | (none) | ntfy access token, if your server needs one. |
 | `GROCERIES_NTFY_PRIORITY` | `high` | Priority of failure alerts. |
 | `GROCERIES_WEBHOOK_URL` | (none) | URL that receives alerts as a JSON POST. |
-| `GROCERIES_ALERT_FAIL_TITLE` | `⚠ {retailer} sync failed` | Failure title; `{retailer}` and `{reason}` are filled in. |
-| `GROCERIES_ALERT_RESOLVED_TITLE` | `✅ Resolved: {retailer} sync` | Recovery title. |
+| `GROCERIES_ALERT_FAIL_TITLE` | `⚠ {retailer} sync failed{account}` | Failure title; `{retailer}`, `{reason}` and `{account}` (" (Partner)") are filled in. Without `{account}` the account name is appended. |
+| `GROCERIES_ALERT_RESOLVED_TITLE` | `✅ Resolved: {retailer} sync{account}` | Recovery title. |
 | `GROCERIES_SYNC_INTERVAL` | `86400` | Docker only: seconds between syncs in the `sync` container. |
 
 ## Running behind a reverse proxy
@@ -196,8 +218,9 @@ skipped; the rest still sync.
 ## Notifications
 
 Optional. With `GROCERIES_NTFY_URL` (and `GROCERIES_NTFY_TOKEN` if needed) or `GROCERIES_WEBHOOK_URL`
-set, you get one message when a retailer's sync starts failing (for example *login needed*) and one when
-it works again. Nothing is repeated while the problem lasts.
+set, you get one message when an account's sync starts failing (for example *login needed*) and one when
+it works again. Nothing is repeated while the problem lasts. Titles name the account, e.g.
+`⚠ AH sync failed (Partner)`; in custom titles use `{retailer}`, `{reason}` and `{account}`.
 
 ## History before your receipts
 
@@ -224,9 +247,12 @@ mapping JSON file for any other bank (see `src/groceries/importers/bank.py`). Th
 | Command | What it does |
 |---|---|
 | `groceries serve` | Run the dashboard. |
-| `groceries sync [ah] [jumbo] [--full] [--refresh-products]` | Fetch new purchases and look up new products. |
-| `groceries login ah\|jumbo` | Log in from a terminal. |
-| `groceries import-token ah\|jumbo` | Start from an existing refresh token (read from stdin). |
+| `groceries sync [ah] [jumbo] [--account NAME] [--full] [--refresh-products]` | Fetch new purchases for every connected account (or one) and look up new products. |
+| `groceries login ah\|jumbo [--account NAME]` | Log in from a terminal. A new name adds an account; without it, the first account. |
+| `groceries import-token ah\|jumbo [--account NAME]` | Start from an existing refresh token (read from stdin). |
+| `groceries accounts list` | Every store account, its state and number of purchases. |
+| `groceries accounts rename NAME NEW` | Rename an account (name or id). |
+| `groceries accounts remove NAME [--purge] [--yes]` | Delete an account's login; its purchases stay unless `--purge`. Asks first. |
 | `groceries import-prices checkjebon [--since 2022-11-01] [--every-days 7] [--full]` | Backfill public shelf prices. |
 | `groceries import-bank FILE.csv [--format ing\|generic\|mapping.json]` | Import supermarket payments from a bank CSV. |
 | `groceries demo-seed [--months 24]` | Fill an empty data directory with synthetic purchases. |

@@ -18,7 +18,7 @@ from .conftest import FakeProvider
 @pytest.fixture
 def synced(config: Config, monkeypatch: pytest.MonkeyPatch) -> FakeProvider:
     provider = FakeProvider(config)
-    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg: provider)
+    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg, account=None: provider)
     sync.run_sync(config, "ah")
     return provider
 
@@ -78,7 +78,7 @@ def test_failure_alerts_once_then_resolves(config: Config, monkeypatch: pytest.M
     sent: list[str] = []
     monkeypatch.setattr("groceries.notify.Notifier.send", lambda self, title, *a, **k: sent.append(title) or True)
     provider = FakeProvider(config)
-    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg: provider)
+    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg, account=None: provider)
 
     def boom() -> None:
         raise RuntimeError("API down")
@@ -87,12 +87,12 @@ def test_failure_alerts_once_then_resolves(config: Config, monkeypatch: pytest.M
     for _ in range(2):
         with pytest.raises(RuntimeError):
             sync.run_sync(config, "ah")
-    assert sent == ["⚠ AH sync failed"]
-    assert "AH" in json.loads((config.data_dir / "alert-state.json").read_text())
+    assert sent == ["⚠ AH sync failed (Main)"]
+    assert "ah:1" in json.loads((config.data_dir / "alert-state.json").read_text())
     monkeypatch.setattr(provider, "check_auth", lambda: None)
     sync.run_sync(config, "ah")
     sync.run_sync(config, "ah")
-    assert sent == ["⚠ AH sync failed", "✅ Resolved: AH sync"]
+    assert sent == ["⚠ AH sync failed (Main)", "✅ Resolved: AH sync (Main)"]
 
 
 def test_web_api(config: Config, synced: FakeProvider) -> None:

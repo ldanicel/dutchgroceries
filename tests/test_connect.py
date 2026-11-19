@@ -21,8 +21,9 @@ class FakeLoginProvider:
 
     exchanged: list[tuple[dict, str]] = []
 
-    def __init__(self, slug: str, config: Config) -> None:
-        self.slug, self.config = slug, config
+    def __init__(self, slug: str, config: Config, account: object = None) -> None:
+        self.slug, self.config, self.account = slug, config, account
+        self.code: str | None = None
 
     def begin_login(self, state: str) -> tuple[str, dict]:
         return f"https://login.example.invalid/authorize?state={state}", {"verifier": "v-" + self.slug}
@@ -31,19 +32,29 @@ class FakeLoginProvider:
         if code == "bad":
             raise AuthError("rejected")
         FakeLoginProvider.exchanged.append((pending, code))
-        (self.config.secrets_dir / f"{self.slug}-token.json").write_text(json.dumps({"access_token": "x"}))
+        self.code = code
+        self.config.secrets_dir.mkdir(parents=True, exist_ok=True)
+        (self.config.secrets_dir / f"{self.slug}-{self.account}-token.json").write_text(
+            json.dumps({"access_token": "x"})
+        )
         return "u***@example.invalid"
+
+    def identity(self) -> str:
+        # codes starting with the same letter log in to the same store account
+        return f"{(self.code or '?')[0].lower()}@example.invalid"
 
 
 @pytest.fixture
 def client(config: Config, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     FakeLoginProvider.exchanged = []
-    monkeypatch.setattr(connect_mod, "get_provider", lambda slug, cfg: FakeLoginProvider(slug, cfg))
+    monkeypatch.setattr(
+        connect_mod, "get_provider", lambda slug, cfg, account=None: FakeLoginProvider(slug, cfg, account)
+    )
     return TestClient(create_app(config))
 
 
-def _start(client: TestClient, slug: str = "jumbo") -> str:
-    r = client.post(f"/api/connections/{slug}/start", json={}, headers=ORIGIN)
+def _start(client: TestClient, slug: str = "jumbo", **body: object) -> str:
+    r = client.post(f"/api/connections/{slug}/start", json=body, headers=ORIGIN)
     assert r.status_code == 200
     assert "gc_login_" + slug in r.cookies
     return r.json()["url"].split("state=")[1]
@@ -52,14 +63,27 @@ def _start(client: TestClient, slug: str = "jumbo") -> str:
 def test_full_connect_flow(client: TestClient, config: Config) -> None:
     state = _start(client)
     r = client.post("/api/connections/jumbo/finish", json={"code": "C1", "state": state}, headers=ORIGIN)
-    assert r.status_code == 200 and r.json() == {"connected": True, "account": "u***@example.invalid"}
+    assert r.status_code == 200
+    assert r.json() == {"connected": True, "account_id": 1, "label": "Main", "account": "u***@example.invalid"}
     assert FakeLoginProvider.exchanged == [
-        ({"state": state, "created": pytest.approx(time.time(), abs=5), "verifier": "v-jumbo"}, "C1")
+        (
+            {
+                "state": state,
+                "created": pytest.approx(time.time(), abs=5),
+                "account_id": None,
+                "label": None,
+                "verifier": "v-jumbo",
+            },
+            "C1",
+        )
     ]
     assert not (config.secrets_dir / "jumbo-weblogin.json").exists()  # single use
+    assert (config.secrets_dir / "jumbo-1-token.json").is_file()
+    assert not list(config.secrets_dir.glob("*staging*"))
     status = {s["retailer"]: s for s in client.get("/api/connections").json()["retailers"]}
-    assert status["jumbo"]["connected"] and status["jumbo"]["account"] == "u***@example.invalid"
-    assert not status["ah"]["connected"]
+    [jumbo] = status["jumbo"]["accounts"]
+    assert jumbo["connected"] and jumbo["account"] == "u***@example.invalid" and jumbo["label"] == "Main"
+    assert status["ah"]["accounts"] == []
     # nothing secret in the status payload
     assert "verifier" not in json.dumps(status) and "access_token" not in json.dumps(status)
 
@@ -79,7 +103,14 @@ def test_finish_rejects_foreign_oauth_state(client: TestClient) -> None:
 
 
 def test_cross_origin_posts_are_refused(client: TestClient) -> None:
-    for path in ("/api/connections/ah/start", "/api/connections/ah/disconnect", "/api/connections/ah/sync"):
+    paths = (
+        "/api/connections/ah/start",
+        "/api/connections/ah/sync",
+        "/api/accounts/1/disconnect",
+        "/api/accounts/1/rename",
+        "/api/accounts/1/sync",
+    )
+    for path in paths:
         assert client.post(path, json={}, headers={"Origin": "https://evil.example"}).status_code == 403
         assert client.post(path, json={}).status_code == 403  # no Origin/Referer at all
     r = client.post("/api/connections/ah/start", data="x", headers={**ORIGIN, "Content-Type": "text/plain"})
@@ -106,10 +137,11 @@ def test_rejected_code_is_reported_and_pending_cleared(client: TestClient, confi
 def test_disconnect_deletes_tokens(client: TestClient, config: Config) -> None:
     state = _start(client)
     client.post("/api/connections/jumbo/finish", json={"code": "C1", "state": state}, headers=ORIGIN)
-    assert client.post("/api/connections/jumbo/disconnect", json={}, headers=ORIGIN).status_code == 200
-    assert not (config.secrets_dir / "jumbo-token.json").exists()
+    assert client.post("/api/accounts/1/disconnect", json={}, headers=ORIGIN).status_code == 200
+    assert not (config.secrets_dir / "jumbo-1-token.json").exists()
     status = {s["retailer"]: s for s in client.get("/api/connections").json()["retailers"]}
-    assert not status["jumbo"]["connected"] and status["jumbo"]["account"] is None
+    [jumbo] = status["jumbo"]["accounts"]
+    assert not jumbo["connected"] and jumbo["label"] == "Main"  # the slot stays, so it can be reconnected
 
 
 def test_helper_puts_the_code_in_the_fragment() -> None:
@@ -145,11 +177,11 @@ def test_needs_reconnect_after_auth_failure(client: TestClient, config: Config) 
     conn = db_connect(config.db_path)
     with conn:
         conn.execute(
-            "INSERT INTO sync_runs (retailer, started_at, status, message) "
-            "VALUES ('ah', '2026-01-01T00:00:00', 'error', 'login needed: AH token endpoint said 401')"
+            "INSERT INTO sync_runs (retailer, account_id, started_at, status, message) "
+            "VALUES ('ah', 1, '2026-01-01T00:00:00', 'error', 'login needed: AH token endpoint said 401')"
         )
     status = {s["retailer"]: s for s in client.get("/api/connections").json()["retailers"]}
-    assert status["ah"]["needs_reconnect"]
+    assert status["ah"]["accounts"][0]["needs_reconnect"]
 
 
 @pytest.mark.parametrize(

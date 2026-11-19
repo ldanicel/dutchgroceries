@@ -48,7 +48,7 @@ def test_generic_signed_amounts() -> None:
 def test_bank_import_is_idempotent_and_fills_months_before_receipts(
     config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg: FakeProvider(cfg))
+    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg, account=None: FakeProvider(cfg))
     sync.run_sync(config, "ah")  # receipts start 2025-03-01
     f = tmp_path / "ing.csv"
     f.write_text(ING_CSV)
@@ -85,7 +85,7 @@ def test_parse_snapshot() -> None:
 
 
 def test_checkjebon_import(config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg: FakeProvider(cfg))
+    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg, account=None: FakeProvider(cfg))
     sync.run_sync(config, "ah")  # the order fixture maps product 100001 to webshop id 500001
     origin = tmp_path / "origin"
     (origin / "data").mkdir(parents=True)
@@ -148,7 +148,7 @@ def test_price_failure_does_not_fail_sync_or_alert(tmp_path: Path, monkeypatch: 
 
     monkeypatch.setenv("GROCERIES_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("GROCERIES_PUBLIC_PRICES", "true")
-    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg: FakeProvider(cfg))
+    monkeypatch.setattr(sync, "get_provider", lambda slug, cfg, account=None: FakeProvider(cfg))
     sent: list[str] = []
     monkeypatch.setattr("groceries.notify.Notifier.send", lambda self, title, *a, **k: sent.append(title) or True)
 
@@ -168,5 +168,11 @@ def test_demo_seed_is_synthetic_and_refuses_real_db(config: Config) -> None:
     a = Analytics(connect(config.db_path))
     assert a.overview()["purchases"] == counts["purchases"]
     assert all(p["name"].startswith("Demo ") for p in a.products("spend", 50))
+    conn = connect(config.db_path)
+    labels = {tuple(r) for r in conn.execute("SELECT retailer, label FROM accounts")}
+    assert labels == {("ah", "Main"), ("ah", "Sam"), ("jumbo", "Main")}
+    ah_owners = conn.execute("SELECT COUNT(DISTINCT account_id) FROM purchases WHERE retailer = 'ah'").fetchone()[0]
+    assert ah_owners == 2
+    assert conn.execute("SELECT COUNT(*) FROM purchases WHERE account_id IS NULL").fetchone()[0] == 0
     with pytest.raises(SystemExit):
         seed(config.data_dir)

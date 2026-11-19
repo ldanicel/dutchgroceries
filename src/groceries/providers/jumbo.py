@@ -273,10 +273,10 @@ class JumboTokenStore(RotatingTokenStore):
     slug = "jumbo"
     label = "Jumbo"
 
-    def __init__(self, secrets_dir, client: httpx.Client) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(secrets_dir)
+    def __init__(self, secrets_dir, client: httpx.Client, account: int | str | None = None) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(secrets_dir, account)
         self.client = client
-        self.pending = secrets_dir / "jumbo-login.json"
+        self.pending = secrets_dir / ("jumbo-login.json" if account is None else f"jumbo-{account}-login.json")
 
     def _token(self, body: dict[str, Any]) -> dict[str, Any]:
         r = self.client.post(f"{AUTH_DOMAIN}/oauth/token", json=body, headers={"User-Agent": BROWSER_UA})
@@ -338,10 +338,10 @@ class Jumbo(Provider):
     slug = "jumbo"
     display_name = "Jumbo"
 
-    def __init__(self, config: Config, client: httpx.Client | None = None) -> None:
-        super().__init__(config)
+    def __init__(self, config: Config, client: httpx.Client | None = None, account: int | str | None = None) -> None:
+        super().__init__(config, account)
         self.client = client or httpx.Client(timeout=30)
-        self.tokens = JumboTokenStore(config.secrets_dir, self.client)
+        self.tokens = JumboTokenStore(config.secrets_dir, self.client, account)
         self._last_call = 0.0
         self._search_ok = True
 
@@ -470,6 +470,9 @@ class Jumbo(Provider):
         email = jwt_claims(raw.get("id_token")).get("email")
         email = email or jwt_claims(raw.get("access_token")).get("https://jumbo.com/username")
         return mask_email(email)
+
+    def identity(self) -> str | None:
+        return jwt_claims(self.tokens.load().get("access_token")).get("sub")
 
     def interactive_login(self) -> None:
         url = self.tokens.start_login()

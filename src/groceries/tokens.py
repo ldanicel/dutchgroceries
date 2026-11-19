@@ -58,10 +58,12 @@ class RotatingTokenStore:
     slug = "?"
     label = "?"
 
-    def __init__(self, secrets_dir: Path) -> None:
+    def __init__(self, secrets_dir: Path, account: int | str | None = None) -> None:
+        """`account`: the account id (one token file per store account); None is the single-account layout."""
         self.dir = secrets_dir
-        self.path = secrets_dir / f"{self.slug}-token.json"
-        self.lock = secrets_dir / f"{self.slug}-token.lock"
+        stem = self.slug if account is None else f"{self.slug}-{account}"
+        self.path = secrets_dir / f"{stem}-token.json"
+        self.lock = secrets_dir / f"{stem}-token.lock"
 
     def load(self) -> dict[str, Any]:
         try:

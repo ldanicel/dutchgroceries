@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import json
 import logging
@@ -17,14 +18,29 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    acc_help = "store account name or id (default: the first account; a new name adds an account)"
     p = sub.add_parser("login", help="log in to a retailer and store its tokens")
     p.add_argument("retailer", choices=sorted(PROVIDERS))
+    p.add_argument("--account", help=acc_help)
 
     p = sub.add_parser("import-token", help="bootstrap from a refresh token (read from stdin or prompt)")
     p.add_argument("retailer", choices=sorted(PROVIDERS))
+    p.add_argument("--account", help=acc_help)
+
+    p = sub.add_parser("accounts", help="list, rename or remove store accounts")
+    asub = p.add_subparsers(dest="action", required=True)
+    asub.add_parser("list", help="every store account and its state")
+    q = asub.add_parser("rename", help="give an account another name")
+    q.add_argument("account", help="name or id")
+    q.add_argument("name")
+    q = asub.add_parser("remove", help="delete an account's login (its purchases stay unless --purge)")
+    q.add_argument("account", help="name or id")
+    q.add_argument("--purge", action="store_true", help="also delete the purchases it synced")
+    q.add_argument("--yes", action="store_true", help="do not ask for confirmation")
 
     p = sub.add_parser("sync", help="pull new purchases")
     p.add_argument("retailers", nargs="*", help="default: GROCERIES_RETAILERS")
+    p.add_argument("--account", help="only this store account (name or id)")
     p.add_argument("--full", action="store_true", help="re-fetch every purchase, not only new ones")
     p.add_argument("--refresh-products", action="store_true", help="look up every product again")
 
@@ -52,27 +68,68 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     config = Config.from_env()
 
-    if args.cmd == "login":
-        get_provider(args.retailer, config).interactive_login()
-    elif args.cmd == "import-token":
-        provider = get_provider(args.retailer, config)
-        token = sys.stdin.readline() if not sys.stdin.isatty() else getpass.getpass("Refresh token: ")
-        provider.import_refresh_token(token)  # type: ignore[attr-defined]
-        print("Token rotated and saved.")
+    if args.cmd in ("login", "import-token"):
+        import secrets as _secrets
+
+        from . import accounts
+        from .connect import ConnectError, Connections
+        from .db import connect
+
+        conn = connect(config.db_path)
+        accounts.migrate_legacy(conn, config)
+        account_id, label = None, args.account
+        if args.account:
+            with contextlib.suppress(accounts.AccountError):  # an unknown name adds an account
+                account_id, label = accounts.find(conn, args.account, args.retailer)["id"], None
+        else:
+            first = [a for a in accounts.list_accounts(conn, config, args.retailer) if a["status"] != "removed"]
+            account_id = first[0]["id"] if first else None
+        staging = f"staging-{_secrets.token_hex(6)}"
+        provider = get_provider(args.retailer, config, account=staging)
+        try:
+            if args.cmd == "login":
+                provider.interactive_login()
+            else:
+                token = sys.stdin.readline() if not sys.stdin.isatty() else getpass.getpass("Refresh token: ")
+                provider.import_refresh_token(token)  # type: ignore[attr-defined]
+            try:
+                identity = accounts.identity_hash(args.retailer, provider.identity())
+            except Exception:  # noqa: BLE001
+                identity = None
+            res = Connections(config)._attach(args.retailer, account_id, label, staging, None, identity)
+        except ConnectError as e:
+            raise SystemExit(f"not saved: {e}") from None
+        finally:
+            for name in (f"{args.retailer}-{staging}-{x}" for x in ("token.json", "token.lock", "login.json")):
+                (config.secrets_dir / name).unlink(missing_ok=True)
+        print(f"Saved the login as {args.retailer} account {res['label']!r} (id {res['account_id']}).")
+    elif args.cmd == "accounts":
+        return _accounts(config, args)
     elif args.cmd == "sync":
+        from . import accounts
+        from .db import connect
         from .sync import run_sync
 
+        conn = connect(config.db_path)
+        accounts.migrate_legacy(conn, config)
         failed = False
+        only = None
+        if args.account:
+            try:
+                acc = accounts.find(conn, args.account, args.retailers[0] if len(args.retailers) == 1 else None)
+            except accounts.AccountError as e:
+                raise SystemExit(str(e)) from None
+            only, args.retailers = acc["id"], [acc["retailer"]]
         targets = (
             args.retailers
             or config.retailers
-            or sorted(s for s in PROVIDERS if (config.secrets_dir / f"{s}-token.json").is_file())
+            or sorted({a["retailer"] for a in accounts.list_accounts(conn, config) if a["connected"]})
         )
         if not targets:
             logging.warning("nothing to sync: no retailer connected (use the web UI or `groceries login ah`)")
         for slug in targets:
             try:
-                run_sync(config, slug, full=args.full, refresh_products=args.refresh_products)
+                run_sync(config, slug, full=args.full, refresh_products=args.refresh_products, account=only)
             except Exception:
                 logging.exception("sync of %s failed", slug)
                 failed = True
@@ -128,6 +185,40 @@ def main(argv: list[str] | None = None) -> int:
         from .db import connect
 
         print(json.dumps(Analytics(connect(config.db_path)).tldr(), indent=2, ensure_ascii=False))
+    return 0
+
+
+def _accounts(config: Config, args: argparse.Namespace) -> int:
+    from . import accounts
+    from .db import connect
+
+    conn = connect(config.db_path)
+    accounts.migrate_legacy(conn, config)
+    try:
+        if args.action == "list":
+            for a in accounts.list_accounts(conn, config):
+                n = conn.execute("SELECT COUNT(*) FROM purchases WHERE account_id = ?", (a["id"],)).fetchone()[0]
+                state = "removed" if a["status"] == "removed" else "connected" if a["connected"] else "not connected"
+                print(
+                    f"{a['id']:>3}  {a['retailer']:<6} {a['label']:<20} {state:<14} {n:>5} purchases  "
+                    f"last sync {a['last_sync'] or 'never'}  {a['display'] or ''}".rstrip()
+                )
+        elif args.action == "rename":
+            acc = accounts.find(conn, args.account)
+            print(f"renamed to {accounts.rename(conn, acc['id'], args.name)!r}")
+        elif args.action == "remove":
+            acc = accounts.find(conn, args.account)
+            n = conn.execute("SELECT COUNT(*) FROM purchases WHERE account_id = ?", (acc["id"],)).fetchone()[0]
+            what = f"and DELETE its {n} purchases" if args.purge else f"(its {n} purchases stay)"
+            if not args.yes:
+                answer = input(f"Remove {acc['retailer']} account {acc['label']!r} {what}? Type yes: ")
+                if answer.strip().lower() != "yes":
+                    print("nothing changed")
+                    return 1
+            deleted = accounts.remove(conn, config, acc["id"], purge=args.purge)
+            print(f"removed {acc['label']!r}" + (f"; deleted {deleted} purchases" if args.purge else ""))
+    except accounts.AccountError as e:
+        raise SystemExit(str(e)) from None
     return 0
 
 

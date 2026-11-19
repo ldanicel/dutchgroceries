@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
+from . import accounts
 from .config import Config
 from .db import connect
 from .notify import Notifier
@@ -29,6 +30,11 @@ class SyncResult:
     fetched: int = 0
     failed: int = 0
     products_enriched: int = 0
+    duplicates: int = 0  # receipts another account of the same retailer already stored
+
+    def add(self, other: SyncResult) -> None:
+        for f in ("listed", "fetched", "failed", "products_enriched", "duplicates"):
+            setattr(self, f, getattr(self, f) + getattr(other, f))
 
 
 def _now() -> str:
@@ -42,12 +48,19 @@ def local_date(ts_utc: str, tz: str) -> str:
     return dt.astimezone(ZoneInfo(tz)).date().isoformat()
 
 
-def store_purchase(conn: sqlite3.Connection, p: Purchase, tz: str, raw_file: str | None) -> None:
+def store_purchase(
+    conn: sqlite3.Connection, p: Purchase, tz: str, raw_file: str | None, account_id: int | None = None
+) -> bool:
+    """Insert or replace a purchase. A purchase is stored once per retailer: when another account
+    already owns it (both accounts see the same receipt), nothing is written and False is returned."""
+    owner = conn.execute("SELECT account_id FROM purchases WHERE id = ?", (p.id,)).fetchone()
+    if owner and account_id is not None and owner[0] is not None and owner[0] != account_id:
+        return False
     conn.execute("DELETE FROM purchases WHERE id = ?", (p.id,))  # cascades to lines/discounts/payments
     conn.execute(
         """INSERT INTO purchases (id, retailer, channel, external_id, ts_utc, local_date, store_id, store_street,
-               store_city, store_postcode, total, discount_total, item_count, status, raw_file)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               store_city, store_postcode, total, discount_total, item_count, status, raw_file, account_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             p.id,
             p.retailer,
@@ -64,6 +77,7 @@ def store_purchase(conn: sqlite3.Connection, p: Purchase, tz: str, raw_file: str
             int(sum(ln.quantity if not ln.weight else 1 for ln in p.lines if ln.amount > 0)),
             p.status,
             raw_file,
+            account_id,
         ),
     )
     conn.executemany(
@@ -102,6 +116,7 @@ def store_purchase(conn: sqlite3.Connection, p: Purchase, tz: str, raw_file: str
                    ON CONFLICT (retailer, product_key) DO UPDATE SET name = excluded.name""",
                 (p.retailer, ln.product_key, ln.name),
             )
+    return True
 
 
 def store_product(conn: sqlite3.Connection, retailer: str, info: ProductInfo) -> None:
@@ -136,18 +151,26 @@ def store_product(conn: sqlite3.Connection, retailer: str, info: ProductInfo) ->
 
 
 def _sync(
-    provider: Provider, conn: sqlite3.Connection, config: Config, full: bool, refresh_products: bool
+    provider: Provider, conn: sqlite3.Connection, config: Config, full: bool, refresh_products: bool, account_id: int
 ) -> SyncResult:
     res = SyncResult(provider.slug)
     provider.check_auth()
+    # every account of the retailer: a receipt another account already stored is not fetched again
     known = {
-        (r["channel"], r["external_id"]): r["status"]
-        for r in conn.execute("SELECT channel, external_id, status FROM purchases WHERE retailer = ?", (provider.slug,))
+        (r["channel"], r["external_id"]): r["account_id"]
+        for r in conn.execute(
+            "SELECT channel, external_id, account_id FROM purchases WHERE retailer = ?", (provider.slug,)
+        )
     }
     raw_root = config.raw_dir / provider.slug
     for ref in provider.list_purchases():
         res.listed += 1
-        if not full and ref.final and (ref.channel, ref.external_id) in known:
+        owner = known.get((ref.channel, ref.external_id), -1)
+        if owner not in (-1, None, account_id):
+            if not full and ref.final:
+                res.duplicates += 1
+                continue
+        elif not full and ref.final and owner != -1:
             continue
         # one odd receipt must not block every older one behind it: log it, count it, carry on
         try:
@@ -155,9 +178,20 @@ def _sync(
             raw_path = raw_root / safe_name(ref.channel) / f"{safe_name(ref.external_id)}.json"
             write_json_atomic(raw_path, raw, 0o600)
             with conn:
-                store_purchase(conn, purchase, config.timezone, str(raw_path.relative_to(config.data_dir)))
+                stored = store_purchase(
+                    conn, purchase, config.timezone, str(raw_path.relative_to(config.data_dir)), account_id
+                )
                 for info in provider.known_products(raw):
                     store_product(conn, provider.slug, info)
+            if not stored:
+                log.info(
+                    "%s: %s purchase %s is already stored from another account; kept once",
+                    provider.slug,
+                    ref.channel,
+                    ref.external_id,
+                )
+                res.duplicates += 1
+                continue
         except AuthError:
             raise
         except Exception:
@@ -207,15 +241,56 @@ def safe_name(value: str) -> str:
     return clean
 
 
-def run_sync(config: Config, retailer: str, full: bool = False, refresh_products: bool = False) -> SyncResult:
+def sync_targets(conn: sqlite3.Connection, config: Config, retailer: str) -> list[int]:
+    """The accounts a retailer sync covers: every connected one. With none connected, the first
+    account (created as "Main" if the retailer has none), so a missing login fails and alerts."""
+    rows = [a for a in accounts.list_accounts(conn, config, retailer) if a["status"] != "removed"]
+    connected = [a["id"] for a in rows if a["connected"]]
+    if connected:
+        return connected
+    if rows:
+        return [rows[0]["id"]]
+    with conn:
+        return [accounts.main_account(conn, retailer)]
+
+
+def run_sync(
+    config: Config, retailer: str, full: bool = False, refresh_products: bool = False, account: int | None = None
+) -> SyncResult:
+    """Sync one account, or every account of the retailer. One failing account does not stop the
+    others; the first error is raised after all of them ran."""
     with file_lock(config.data_dir / f"sync-{retailer}.lock"):  # the timer and the web UI may overlap
-        return _run_sync(config, retailer, full, refresh_products)
+        conn = connect(config.db_path)
+        accounts.migrate_legacy(conn, config)
+        targets = [account] if account is not None else sync_targets(conn, config, retailer)
+        total, error = SyncResult(retailer), None
+        for account_id in targets:
+            try:
+                total.add(_run_sync(config, conn, retailer, account_id, full, refresh_products))
+            except Exception as e:
+                if len(targets) > 1:
+                    log.error("%s account %s: sync failed: %s", retailer, account_id, e)
+                error = error or e
+        if error:
+            raise error
+        return total
 
 
-def _run_sync(config: Config, retailer: str, full: bool, refresh_products: bool) -> SyncResult:
-    conn = connect(config.db_path)
+def _run_sync(
+    config: Config, conn: sqlite3.Connection, retailer: str, account_id: int, full: bool, refresh_products: bool
+) -> SyncResult:
+    acc = accounts.get(conn, account_id)
+    if not acc or acc["retailer"] != retailer:
+        raise ValueError(f"no {retailer} account {account_id}")
     notifier = Notifier(config)
-    provider = get_provider(retailer, config)
+    provider = get_provider(retailer, config, account=account_id)
+    first = conn.execute("SELECT MIN(id) FROM accounts WHERE retailer = ?", (retailer,)).fetchone()[0]
+    alert = {
+        "key": f"{retailer}:{account_id}",
+        "retailer": provider.display_name,
+        "account": acc["label"],
+        "legacy": provider.display_name if account_id == first else None,  # the single-account alert key
+    }
     with conn:
         # a run still marked 'running' was killed (we hold the per-retailer lock now)
         conn.execute(
@@ -223,10 +298,13 @@ def _run_sync(config: Config, retailer: str, full: bool, refresh_products: bool)
             (_now(), retailer),
         )
         run_id = conn.execute(
-            "INSERT INTO sync_runs (retailer, started_at, status) VALUES (?, ?, 'running')", (retailer, _now())
+            "INSERT INTO sync_runs (retailer, account_id, started_at, status) VALUES (?, ?, ?, 'running')",
+            (retailer, account_id, _now()),
         ).lastrowid
     try:
-        res = _sync(provider, conn, config, full, refresh_products)
+        res = _sync(provider, conn, config, full, refresh_products, account_id)
+        if not acc["identity"]:  # accounts from before multi-account support: learn who they are
+            _learn_identity(conn, provider, retailer, account_id)
     except Exception as e:
         kind = "login needed" if isinstance(e, AuthError) else type(e).__name__
         msg = f"{kind}: {e}"
@@ -235,9 +313,11 @@ def _run_sync(config: Config, retailer: str, full: bool, refresh_products: bool)
                 "UPDATE sync_runs SET finished_at = ?, status = 'error', message = ? WHERE id = ?",
                 (_now(), msg[:2000], run_id),
             )
-        notifier.failed(provider.display_name, msg)
+        notifier.failed(error=msg, **alert)
         raise
     msg = f"{res.fetched} new/updated purchases, {res.products_enriched} products looked up ({res.listed} listed)"
+    if res.duplicates:
+        msg += f"; {res.duplicates} already stored from another account"
     if res.failed:
         msg += f"; {res.failed} skipped after errors (see the log)"
     with conn:
@@ -245,9 +325,25 @@ def _run_sync(config: Config, retailer: str, full: bool, refresh_products: bool)
             "UPDATE sync_runs SET finished_at = ?, status = ?, new_purchases = ?, message = ? WHERE id = ?",
             (_now(), "partial" if res.failed else "ok", res.fetched, msg, run_id),
         )
-    notifier.succeeded(provider.display_name, msg)
-    log.info("%s: %s", retailer, msg)
+        conn.execute(
+            "UPDATE accounts SET last_sync = ?, status = CASE WHEN status = 'removed' THEN status ELSE 'connected' END "
+            "WHERE id = ?",
+            (_now(), account_id),
+        )
+    notifier.succeeded(message=msg, **alert)
+    log.info("%s (%s): %s", retailer, acc["label"], msg)
     return res
+
+
+def _learn_identity(conn: sqlite3.Connection, provider: Provider, retailer: str, account_id: int) -> None:
+    try:
+        identity = accounts.identity_hash(retailer, provider.identity())
+    except Exception:  # noqa: BLE001  (only used to refuse duplicate logins later)
+        log.debug("%s: could not read the account identity", retailer, exc_info=True)
+        return
+    if identity:
+        with conn:
+            conn.execute("UPDATE accounts SET identity = ? WHERE id = ? AND identity IS NULL", (identity, account_id))
 
 
 def normalize_quantities(conn: sqlite3.Connection, retailer: str, window_days: int = 90) -> int:

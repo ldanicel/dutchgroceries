@@ -29,5 +29,8 @@ and your full purchase history, so treat it like a password manager:
 - A web login is bound to the browser that started it (random state, HttpOnly SameSite=Strict cookie,
   15 minutes, single use), uses PKCE where the retailer supports it, and is only completed after you
   confirm it on the dashboard.
+- With several accounts per supermarket, a login is also bound to the account slot it was started for,
+  and a store account can be connected only once. Each account has its own token file; the database keeps
+  only a label, a masked e-mail and a SHA-256 hash of the retailer's account e-mail or user id.
 - State-changing endpoints accept only same-origin JSON POSTs.
 - The retailer APIs are unofficial and undocumented; their behaviour can change at any time.

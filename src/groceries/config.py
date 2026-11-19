@@ -43,8 +43,8 @@ class Config:
     ntfy_token: str = ""
     ntfy_priority: str = "high"
     webhook_url: str = ""
-    alert_fail_title: str = "⚠ {retailer} sync failed"
-    alert_resolved_title: str = "✅ Resolved: {retailer} sync"
+    alert_fail_title: str = "⚠ {retailer} sync failed{account}"
+    alert_resolved_title: str = "✅ Resolved: {retailer} sync{account}"
     retailers: list[str] = field(default_factory=list)  # empty: every retailer that has a stored login
     public_prices: bool = False  # refresh public shelf prices (checkjebon) after the sync, weekly
 
