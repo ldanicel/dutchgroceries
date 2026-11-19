@@ -102,7 +102,10 @@ def register(app: FastAPI, config: Config, db: Callable[..., Any]) -> None:
             body = None
         if not isinstance(body, dict):
             raise HTTPException(400, "expected a JSON object")
-        code, returned_state = parse_pasted(str(body.get("pasted") or body.get("code") or ""))
+        try:
+            code, returned_state = parse_pasted(str(body.get("pasted") or body.get("code") or ""))
+        except ConnectError as e:
+            raise HTTPException(400, str(e)) from None
         returned_state = body.get("state") or returned_state
         cookie = request.cookies.get(COOKIE_PREFIX + slug)
         verifier = str(body.get("verifier") or "") or None

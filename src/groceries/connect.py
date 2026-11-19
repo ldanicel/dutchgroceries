@@ -37,6 +37,7 @@ class ConnectError(Exception):
     pass
 
 
+MAX_PASTED = 32 * 1024
 _APP_URL = re.compile(r"""(?:appie|jumbo)://[^\s'"<>]+""")
 _FORM_CODE = re.compile(r"""name=["']code["'][^>]*value=["']([^"']+)""", re.I)
 _FORM_STATE = re.compile(r"""name=["']state["'][^>]*value=["']([^"']+)""", re.I)
@@ -47,6 +48,8 @@ def parse_pasted(pasted: str) -> tuple[str, str | None]:
     from .tokens import extract_code, extract_param
 
     text = pasted.strip()
+    if len(text) > MAX_PASTED:  # a console line or form_post page is a few KB; also bounds the regex work
+        raise ConnectError("what was pasted is too long; paste only the red 'Failed to launch' line")
     m = _FORM_CODE.search(text)  # a form_post page (its action is a jumbo:// URL too, so check this first)
     if m:
         s = _FORM_STATE.search(text)

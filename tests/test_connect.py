@@ -261,3 +261,14 @@ def test_unknown_host_names_are_refused(config: Config) -> None:
     config.allowed_hosts = "groceries.home.example"
     c = TestClient(create_app(config))
     assert c.get("/api/connections", headers={"Host": "groceries.home.example"}).status_code == 200
+
+
+def test_overlong_paste_is_refused() -> None:
+    with pytest.raises(ConnectError):
+        parse_pasted("name='code' " * 10_000)
+
+
+def test_overlong_paste_is_a_clean_error(client: TestClient) -> None:
+    _start(client)
+    r = client.post("/api/connections/jumbo/finish", json={"pasted": "x" * 40_000}, headers=ORIGIN)
+    assert r.status_code == 400 and "too long" in r.json()["detail"]
