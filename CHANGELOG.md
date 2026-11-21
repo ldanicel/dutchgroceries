@@ -12,6 +12,16 @@
   names wrapped over several lines, subtotal lines, returned bottle deposit, the plastic levy line, paper
   bags, several payment methods and cash change. Payments are read only from the block after the total.
 - A Jumbo receipt whose lines do not add up to its total is logged with its id.
+- **`groceries reimport [--provider ah|jumbo] [--account NAME] [--receipt ID] [--dry-run]`**: re-parse
+  the raw responses saved by earlier syncs with the current parser and update the database, without
+  network or login. Only changed purchases are rewritten; `--dry-run` lists receipts changed, lines added
+  or removed and totals before and after. Search matches the new check rejects are cleared and looked up
+  again on the next sync.
+- **`groceries export-raw --receipt ID [--redact]`**: one purchase's raw response, with ids, card
+  details, addresses and store details stripped, to attach to an issue. See *Debugging* in the README.
+- Providers implement `parse_raw(channel, raw)`; both Albert Heijn and Jumbo archive their responses as
+  `{"summary", "detail"}` under `raw/<retailer>/<channel>/`.
+- Dev container (`.devcontainer/`): Python 3.13, ruff, pytest, dashboard on port 8080.
 
 ## v1.1.0 – 2026-11-19
 

@@ -1,4 +1,4 @@
-"""Command line: `groceries login|import-token|sync|serve|stats`."""
+"""Command line: `groceries login|import-token|sync|reimport|serve|stats|...`."""
 
 from __future__ import annotations
 
@@ -43,6 +43,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--account", help="only this store account (name or id)")
     p.add_argument("--full", action="store_true", help="re-fetch every purchase, not only new ones")
     p.add_argument("--refresh-products", action="store_true", help="look up every product again")
+
+    p = sub.add_parser("reimport", help="re-parse the saved raw responses and update the database (no network)")
+    p.add_argument("--provider", choices=sorted(PROVIDERS), help="only this retailer (default: all)")
+    p.add_argument("--account", help="only purchases of this store account (name or id)")
+    p.add_argument("--receipt", help="only this purchase (receipt/order id or raw file name)")
+    p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
+
+    p = sub.add_parser("export-raw", help="print the saved raw response of one purchase, e.g. for a bug report")
+    p.add_argument("--receipt", required=True, help="receipt/order id or raw file name")
+    p.add_argument("--redact", action="store_true", help="strip ids, card numbers, addresses and store details")
+    p.add_argument("-o", "--output", help="write to this file instead of stdout")
 
     p = sub.add_parser("import-prices", help="backfill shelf prices from a public dataset (opt-in)")
     p.add_argument("source", choices=["checkjebon"])
@@ -143,6 +154,10 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 logging.warning("public price refresh failed (ignored)", exc_info=True)
         return 1 if failed else 0
+    elif args.cmd == "reimport":
+        return _reimport(config, args)
+    elif args.cmd == "export-raw":
+        return _export_raw(config, args)
     elif args.cmd == "import-prices":
         from datetime import date
         from pathlib import Path
@@ -219,6 +234,65 @@ def _accounts(config: Config, args: argparse.Namespace) -> int:
             print(f"removed {acc['label']!r}" + (f"; deleted {deleted} purchases" if args.purge else ""))
     except accounts.AccountError as e:
         raise SystemExit(str(e)) from None
+    return 0
+
+
+def _reimport(config: Config, args: argparse.Namespace) -> int:
+    from . import accounts
+    from .db import connect
+    from .reimport import reimport
+
+    conn = connect(config.db_path)
+    accounts.migrate_legacy(conn, config)
+    try:
+        res = reimport(
+            conn,
+            config,
+            [args.provider] if args.provider else None,
+            account=args.account,
+            receipt=args.receipt,
+            dry_run=args.dry_run,
+        )
+    except accounts.AccountError as e:
+        raise SystemExit(str(e)) from None
+    for d in res.changed:
+        before = "new" if d.new else f"{d.total_before:.2f}"
+        print(f"{d.id}: total {before} -> {d.total_after:.2f}" + (f"; {', '.join(d.other)}" if d.other else ""))
+        for line in d.lines_removed:
+            print(f"  - {line}")
+        for line in d.lines_added:
+            print(f"  + {line}")
+    for retailer, name, title in res.titles_dropped:
+        print(f"{retailer} product {name!r}: drop search match {title!r}")
+    summary = res.summary()
+    if args.dry_run:
+        summary["dry_run"] = True
+    print(json.dumps(summary, indent=2))
+    return 1 if res.failed else 0
+
+
+def _export_raw(config: Config, args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .reimport import find_raw, redact
+
+    try:
+        retailer, channel, path = find_raw(config, args.receipt)
+    except LookupError as e:
+        raise SystemExit(str(e)) from None
+    raw = json.loads(path.read_text())
+    if args.redact:
+        raw = redact(raw)
+    else:
+        logging.warning("not redacted: this file contains your receipt ids, store and payment details")
+    text = json.dumps(raw, ensure_ascii=False, indent=1)
+    # same format as the archive: dropped into <data dir>/raw/<retailer>/<channel>/, `reimport` reads it
+    logging.info("%s %s purchase; it re-imports from raw/%s/%s/", retailer, channel, retailer, channel)
+    if args.output:
+        Path(args.output).write_text(text + "\n")
+        logging.info("wrote %s", args.output)
+    else:
+        print(text)
     return 0
 
 

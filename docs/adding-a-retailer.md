@@ -25,7 +25,11 @@ class ExampleMarket(Provider):
         Set final=False for purchases that can still change (e.g. an order not yet delivered)."""
 
     def fetch_purchase(self, ref: PurchaseRef) -> tuple[dict[str, Any], Purchase]:
-        """Return (raw JSON to archive, normalized Purchase)."""
+        """Return (raw JSON to archive, normalized Purchase): fetch the raw JSON, then parse_raw() it."""
+
+    def parse_raw(self, channel: str, raw: dict[str, Any]) -> Purchase:
+        """Normalize a purchase from the archived raw JSON alone, without network.
+        `groceries reimport` calls it to apply parser fixes to purchases already stored."""
 
     def lookup_products(self, items: list[tuple[str, str]]) -> Iterator[ProductInfo]:
         """Catalogue details for (product key, receipt name) pairs: title, brand, category."""
@@ -34,6 +38,8 @@ class ExampleMarket(Provider):
 Optional hooks:
 
 - `known_products(raw)`: product details that come with a purchase for free (online orders often have them).
+- `title_matches(name, title)`: when `lookup_products` maps receipt names to catalogue titles by search,
+  say whether a stored title still belongs to the name; `reimport` clears the ones that do not.
 - `begin_login(state)` / `complete_login(pending, code)`: the browser connect flow. Return the authorize
   URL plus private data to keep (such as a PKCE verifier), then exchange the code, store the tokens and
   return a masked account label.
