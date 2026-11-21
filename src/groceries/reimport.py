@@ -49,6 +49,8 @@ class ReimportResult:
     files: int = 0
     unchanged: int = 0
     failed: int = 0
+    skipped: int = 0  # raw files without a stored purchase, with stored_only
+    store_failed: int = 0  # of `failed`: parsed, but the database refused it (perhaps only for now)
     diffs: list[PurchaseDiff] = field(default_factory=list)
     titles_dropped: list[tuple[str, str, str]] = field(default_factory=list)  # (retailer, receipt name, title)
     products_pruned: int = 0
@@ -67,6 +69,7 @@ class ReimportResult:
             "receipts_new": sum(d.new for d in ch),
             "receipts_unchanged": self.unchanged,
             "receipts_failed": self.failed,
+            "raw_files_skipped": self.skipped,
             "lines_added": sum(len(d.lines_added) for d in ch),
             "lines_removed": sum(len(d.lines_removed) for d in ch),
             "total_before": round(self.total_before, 2),
@@ -185,11 +188,15 @@ def reimport(
     account: str | None = None,
     receipt: str | None = None,
     dry_run: bool = False,
+    stored_only: bool = False,
 ) -> ReimportResult:
+    """Re-parse the raw files. A raw file without a purchase in the database (one dropped into raw/ by
+    hand, or left by a sync that failed to store it) is imported into the retailer's first account,
+    unless `stored_only`: then it is skipped, which is what the automatic run after an upgrade does."""
     res = ReimportResult()
     for retailer in retailers or sorted(PROVIDERS):
         with file_lock(config.data_dir / f"sync-{retailer}.lock"):  # not while a sync writes the same rows
-            _reimport_retailer(conn, config, res, retailer, account, receipt, dry_run)
+            _reimport_retailer(conn, config, res, retailer, account, receipt, dry_run, stored_only)
     return res
 
 
@@ -201,6 +208,7 @@ def _reimport_retailer(
     account: str | None,
     receipt: str | None,
     dry_run: bool,
+    stored_only: bool,
 ) -> None:
     provider = get_provider(retailer, config)
     only = accounts.find(conn, account, retailer)["id"] if account else None
@@ -219,6 +227,9 @@ def _reimport_retailer(
         exists, owner = _owner(conn, p, rel)
         if only is not None and exists and owner != only:
             continue
+        if stored_only and not exists:
+            res.skipped += 1
+            continue
         res.files += 1
         d = diff_purchase(conn, p)
         res.diffs.append(d)
@@ -229,13 +240,22 @@ def _reimport_retailer(
             continue
         if dry_run:
             continue
-        # a raw file nobody stored yet (e.g. one shared in an issue) goes to the account asked for or
-        # the retailer's first account
-        account_id = owner if exists else (only or accounts.main_account(conn, retailer))
-        with conn:
-            store_purchase(conn, p, config.timezone, rel, account_id)
-            for info in provider.known_products(raw):
-                store_product(conn, retailer, info)
+        try:
+            with conn:  # one transaction per purchase: an error rolls back that purchase only
+                # a raw file nobody stored yet (e.g. one shared in an issue) goes to the account asked for
+                # or the retailer's first account
+                account_id = owner if exists else (only or accounts.default_account(conn, retailer))
+                store_purchase(conn, p, config.timezone, rel, account_id)
+                for info in provider.known_products(raw):
+                    store_product(conn, retailer, info)
+        except sqlite3.Error:
+            log.warning("%s: cannot store %s", retailer, path, exc_info=True)
+            res.diffs.remove(d)  # not changed after all
+            res.total_before -= d.total_before or 0
+            res.total_after -= p.total
+            res.failed += 1
+            res.store_failed += 1
+            continue
         touched = True
     res.titles_dropped += _check_titles(conn, provider, dry_run)
     if not dry_run:
