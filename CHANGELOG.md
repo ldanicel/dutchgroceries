@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.2.1 – 2026-11-21
+
+- **Automatic reimport after an upgrade.** The first time `groceries serve` or `groceries sync` starts
+  with a different version, it re-parses the saved raw responses of the stored purchases once (like
+  `groceries reimport`), so parser fixes also reach purchases synced earlier. It logs every changed
+  receipt and a summary. The dashboard starts right away (it runs in the background); an error is
+  logged, never stops the sync or the dashboard, and is retried on the next start. It does nothing on a
+  new database or when the version did not change. The database stores the last version in a new
+  `meta` table. Turn it off with `GROCERIES_AUTO_REIMPORT=false` (`0`, `no`, `off` and `disabled` work
+  too; an unknown value keeps the default and logs a warning).
+- **`groceries accounts remove --purge` also deletes the account's saved raw responses**, so a later
+  `groceries reimport` cannot bring the purchases back.
+- Fix: `groceries reimport` of a raw file without a stored purchase added it to a second "Main" account
+  and failed; it now goes to the retailer's existing account. A purchase that cannot be stored is
+  counted as failed and the others carry on.
+- **`groceries --version`**. The version is also shown in the dashboard footer and returned by
+  `/healthz` (`{"status": "ok", "version": "1.2.1"}`).
+- README: new *Upgrading* section for Docker and venv/systemd installs. Fixed the Docker command prefix:
+  it is `docker compose exec web groceries …` (the services are `web` and `sync`).
+
 ## v1.2.0 – 2026-11-21
 
 - **Fix: Jumbo products got the wrong name.** The product lookup took the first search result for every
