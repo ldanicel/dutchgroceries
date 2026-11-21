@@ -374,9 +374,16 @@ class AlbertHeijn(Provider):
     def fetch_purchase(self, ref: PurchaseRef) -> tuple[dict[str, Any], Purchase]:
         if ref.channel == "store":
             detail = self.graphql(RECEIPT_QUERY, {"id": ref.external_id})["posReceiptDetails"]
-            return {"summary": ref.summary, "detail": detail}, parse_receipt(ref.summary, detail)
-        detail = self._request("GET", f"/mobile-services/order/v1/{int(ref.external_id)}/details-grouped-by-taxonomy")
-        return {"summary": ref.summary, "detail": detail}, parse_order(ref.summary, detail)
+        else:
+            path = f"/mobile-services/order/v1/{int(ref.external_id)}/details-grouped-by-taxonomy"
+            detail = self._request("GET", path)
+        raw = {"summary": ref.summary, "detail": detail}  # archived as-is, so `groceries reimport` can re-parse it
+        return raw, self.parse_raw(ref.channel, raw)
+
+    def parse_raw(self, channel: str, raw: dict[str, Any]) -> Purchase:
+        if channel == "store":
+            return parse_receipt(raw["summary"], raw["detail"])
+        return parse_order(raw["summary"], raw["detail"])
 
     def known_products(self, raw: dict[str, Any]) -> Iterator[ProductInfo]:
         detail = raw.get("detail") or {}

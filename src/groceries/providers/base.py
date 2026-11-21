@@ -110,6 +110,15 @@ class Provider(abc.ABC):
     def fetch_purchase(self, ref: PurchaseRef) -> tuple[dict[str, Any], Purchase]:
         """Return (raw JSON to archive, normalized purchase)."""
 
+    @abc.abstractmethod
+    def parse_raw(self, channel: str, raw: dict[str, Any]) -> Purchase:
+        """Normalize a purchase from the raw JSON that fetch_purchase archived; no network.
+        `groceries reimport` uses it to apply parser fixes to purchases already stored."""
+
+    def title_matches(self, name: str, title: str) -> bool:
+        """Whether a catalogue title found by search belongs to the receipt name (False: drop it)."""
+        return True
+
     def known_products(self, raw: dict[str, Any]) -> Iterable[ProductInfo]:
         """Product details that came for free with a purchase (e.g. online order lines)."""
         return ()

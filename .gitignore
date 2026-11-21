@@ -12,6 +12,7 @@ config.env
 *-token.json
 raw/
 checkjebon/
+demo/
 
 __pycache__/
 *.egg-info/

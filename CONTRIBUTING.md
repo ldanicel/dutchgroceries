@@ -19,6 +19,24 @@ GROCERIES_DATA_DIR=./demo .venv/bin/groceries demo-seed
 GROCERIES_DATA_DIR=./demo .venv/bin/groceries serve
 ```
 
+## Develop in a container
+
+The repository has a [dev container](https://containers.dev/) (`.devcontainer/devcontainer.json`): Python
+3.13 with `pip install -e '.[dev]'`, ruff and pytest, and the VS Code Python and Ruff extensions. Open the
+folder in VS Code and choose *Reopen in Container*, or use the CLI:
+
+```sh
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . pytest
+devcontainer exec --workspace-folder . groceries demo-seed
+devcontainer exec --workspace-folder . groceries serve    # forwarded on http://localhost:8080
+```
+
+Inside the container `GROCERIES_DATA_DIR` is `./demo` and the dashboard listens on port 8080.
+
+To debug a parser with a real (redacted) receipt, copy it to `demo/raw/<retailer>/<channel>/` and run
+`groceries reimport --dry-run`; see *Debugging* in the README.
+
 ## Guidelines
 
 - Keep pull requests focused, with tests for behaviour changes. CI runs ruff and pytest on Python 3.11

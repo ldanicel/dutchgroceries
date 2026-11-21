@@ -46,9 +46,13 @@ class FakeProvider(Provider):
         yield PurchaseRef("online", str(self.order["summary"]["orderId"]), summary=self.order["summary"])
 
     def fetch_purchase(self, ref: PurchaseRef) -> tuple[dict[str, Any], Purchase]:
-        if ref.channel == "store":
-            return self.receipt, parse_receipt(self.receipt["summary"], self.receipt["detail"])
-        return self.order, parse_order(self.order["summary"], self.order["detail"])
+        raw = self.receipt if ref.channel == "store" else self.order
+        return raw, self.parse_raw(ref.channel, raw)
+
+    def parse_raw(self, channel: str, raw: dict[str, Any]) -> Purchase:
+        if channel == "store":
+            return parse_receipt(raw["summary"], raw["detail"])
+        return parse_order(raw["summary"], raw["detail"])
 
     def known_products(self, raw: dict[str, Any]) -> Iterator[ProductInfo]:
         if "groupedProductsInTaxonomy" in raw["detail"]:

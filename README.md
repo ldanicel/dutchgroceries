@@ -30,6 +30,7 @@ change over time.
 - [Data and privacy](#data-and-privacy)
 - [Limitations](#limitations)
 - [FAQ and troubleshooting](#faq-and-troubleshooting)
+- [Debugging](#debugging)
 - [Contributing, security, license](#contributing-security-license)
 
 ## Features
@@ -253,6 +254,8 @@ mapping JSON file for any other bank (see `src/groceries/importers/bank.py`). Th
 | `groceries accounts list` | Every store account, its state and number of purchases. |
 | `groceries accounts rename NAME NEW` | Rename an account (name or id). |
 | `groceries accounts remove NAME [--purge] [--yes]` | Delete an account's login; its purchases stay unless `--purge`. Asks first. |
+| `groceries reimport [--provider ah\|jumbo] [--account NAME] [--receipt ID] [--dry-run]` | Re-parse the saved raw responses with the current parser and update the database. No network, no login. |
+| `groceries export-raw --receipt ID [--redact] [-o FILE]` | Print the saved raw response of one purchase, e.g. for a bug report. |
 | `groceries import-prices checkjebon [--since 2022-11-01] [--every-days 7] [--full]` | Backfill public shelf prices. |
 | `groceries import-bank FILE.csv [--format ing\|generic\|mapping.json]` | Import supermarket payments from a bank CSV. |
 | `groceries demo-seed [--months 24]` | Fill an empty data directory with synthetic purchases. |
@@ -305,9 +308,42 @@ your proxy's address.
 
 **Where are the logs?** `docker compose logs` or `journalctl -u groceries-web -u groceries-sync`.
 
+## Debugging
+
+Every sync keeps the retailer's response for each purchase in `<data dir>/raw/<retailer>/<channel>/`
+(`store` receipts, `online` orders), exactly as received. When a receipt looks wrong after an update of
+the app, re-parse what you already have instead of logging in again:
+
+```sh
+groceries reimport --dry-run                  # what would change: receipts, lines added/removed, totals
+groceries reimport --provider jumbo           # apply it (only changed receipts are rewritten)
+groceries reimport --receipt ID --dry-run     # one receipt (receipt/order id or raw file name)
+```
+
+`reimport` also drops catalogue titles that a search matched to the wrong product, so the dashboard shows
+the receipt name until the next sync finds a better match. Running it twice changes nothing the second
+time. Back up `groceries.db` first if you want to compare. With Docker, prefix the commands with
+`docker compose exec groceries`.
+
+A Jumbo receipt whose lines do not add up to its total is logged as
+`Jumbo receipt <id>: lines add up to … but the receipt total is …`.
+
+**Sharing a receipt in an issue.** Raw files contain your receipt and member ids, card details and
+store. Export a redacted copy and attach that:
+
+```sh
+groceries export-raw --receipt ID --redact -o receipt.json
+```
+
+`--redact` replaces transaction, order, member and card ids with stable pseudonyms, blanks store and
+delivery addresses and store names, masks the receipt header, the card slip and the footer of printed
+receipts, and drops barcodes and loyalty balances. Product names and amounts stay: they are what a parser
+fix needs. Read the file before you post it. A maintainer can drop it into
+`<data dir>/raw/<retailer>/<channel>/` and run `groceries reimport` to reproduce the problem.
+
 ## Contributing, security, license
 
-- [CONTRIBUTING.md](CONTRIBUTING.md): development setup, tests, code style.
+- [CONTRIBUTING.md](CONTRIBUTING.md): development setup (also as a dev container), tests, code style.
 - [docs/architecture.md](docs/architecture.md) and [docs/adding-a-retailer.md](docs/adding-a-retailer.md).
 - [SECURITY.md](SECURITY.md): reporting vulnerabilities, running it safely.
 - [CHANGELOG.md](CHANGELOG.md).

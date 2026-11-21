@@ -22,6 +22,7 @@ retailer app APIs ──► providers/ah.py, providers/jumbo.py ──► sync.p
 | `tokens.py` | `RotatingTokenStore`: tokens on disk, refreshed under a file lock and written atomically before use. |
 | `accounts.py` | Store accounts (several per retailer): labels, token file paths, duplicate detection, the upgrade from single-account installs. |
 | `sync.py` | Runs a provider: lists purchases, fetches new ones, archives the raw JSON, stores normalized rows, looks up products, repairs quantities, records the run and triggers alerts. |
+| `reimport.py` | `groceries reimport` and `export-raw`: re-parse the archived raw JSON offline, and redact a raw file for sharing. |
 | `db.py` | The SQLite schema (created and migrated on connect). |
 | `analytics.py` | Read-only queries behind the dashboard, including the cleaning of public shelf prices. |
 | `web.py`, `web_connect.py` | FastAPI app: JSON API, dashboard page, and the browser login flow. |
@@ -46,8 +47,10 @@ Every row carries a `retailer` slug (`ah`, `jumbo`).
 - `bank_payments`: optional supermarket payments from bank CSVs.
 - `sync_runs`: one row per sync (`ok`, `partial`, `error`, `aborted`).
 
-The raw JSON of every purchase is kept under `<data dir>/raw/<retailer>/`, so new parsing can be applied
-later without fetching again (`groceries sync --full` re-fetches everything the retailer still has).
+The raw JSON of every purchase is kept under `<data dir>/raw/<retailer>/<channel>/`, so new parsing can be
+applied later without fetching again: `groceries reimport` (`reimport.py`) re-parses those files with each
+provider's `parse_raw()` and rewrites only the purchases whose result changed. `groceries sync --full`
+re-fetches everything the retailer still has.
 
 ## Accounts
 
