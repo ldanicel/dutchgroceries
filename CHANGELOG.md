@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0 – 2026-11-21
 
 - **Fix: Jumbo products got the wrong name.** The product lookup took the first search result for every
   receipt name, and Jumbo's search often puts the same promoted product first, so different products
