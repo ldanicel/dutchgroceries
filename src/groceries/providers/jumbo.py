@@ -80,13 +80,24 @@ DONE_ORDER_STATES = {"DELIVERED", "COMPLETED", "PICKED_UP", "CLOSED", "INVOICED"
 
 
 # --- receipt document parsing -------------------------------------------------------------------
+# The receipt detail carries no item fields: the printed text is the only source of lines. Each printed
+# line comes as cells (name, bonus flag, ..., amount); padded on most tills, but not on every one.
 _AMOUNT = r"-?\d+,\d{2}"
 _MULT = re.compile(rf"^\s*(\d+(?:,\d+)?)\s*(kg)?\s*[xX]\s+(\d+,\d{{2}})(?:\s+P)?\s+({_AMOUNT})\s*$", re.I)
 _ITEM = re.compile(rf"^(.*?)(?:\s+P)?\s+({_AMOUNT})\s*$")
-_PAYMENT = re.compile(
-    rf"^\s*(PIN|PINNEN|VISA|MASTERCARD|MAESTRO|V PAY|CONTANT|CREDITCARD|CADEAUKAART)\b.*?({_AMOUNT})\s*$", re.I
-)
+_HEADER = re.compile(r"^\s*(OMSCHRIJVING|ARTIKEL(EN)?|DESCRIPTION)\b", re.I)
+_TOTAL = re.compile(rf"^\s*(TOTAAL|TE BETALEN)\b(?!\s*(KORTING|BESPAARD|VOORDEEL))\D*({_AMOUNT})", re.I)
+_SUBTOTAL = re.compile(r"^\s*SUB\s*-?\s*TOTAAL\b", re.I)
+_SEPARATOR = re.compile(r"^[\s=*_-]*$")
+_PAYMENT = re.compile(rf"^\s*(.*?\S)\s*:?\s+({_AMOUNT})\s*(EUR)?\s*$", re.I)
+_PAYMENT_END = re.compile(r"^\s*(BTW|CUSTOMER|KLANTENTICKET|TOTAAL KORTING|TERMINAL|AANTAL ARTIKELEN)", re.I)
 _DEPOSIT_RETURN = re.compile(rf"(retour\s+emballage|emballage|statiegeld\s*retour|statiegeldbon)\D*({_AMOUNT})", re.I)
+# bottle deposit, carrier bags and the plastic levy are not products
+_NOT_A_PRODUCT = re.compile(
+    r"^(STATIEGELD|EMBALLAGE|LEEGGOED|NL INCL\.?\s*HEF|(JUMBO\s+)?(LUS)?DRAAGTAS|(PAPIEREN|PLASTIC)\s+TAS|"
+    r"BOODSCHAPPENTAS|TASJE)\b",
+    re.I,
+)
 
 
 def _num(text: str) -> float:
@@ -104,78 +115,116 @@ def receipt_text_lines(image: str | dict[str, Any]) -> list[str]:
         for section in doc.get("printSections") or []:
             for obj in section.get("textObjects") or []:
                 for tl in obj.get("textLines") or []:
-                    text = "".join(seg.get("text") or "" for seg in tl.get("texts") or [])
-                    if text.strip():
-                        out.append(text.rstrip())
+                    text = ""
+                    for seg in tl.get("texts") or []:
+                        cell = seg.get("text") or ""
+                        # unpadded cells ("MELK", "1,19") must not run together into "MELK1,19"
+                        if text and cell and not text[-1].isspace() and not cell[0].isspace():
+                            text += " "
+                        text += cell
+                    for part in text.splitlines():  # footer blocks come as one text with newlines
+                        if part.strip():
+                            out.append(part.rstrip())
     return out
 
 
-def parse_receipt_lines(lines: list[str]) -> dict[str, Any]:
-    """Pull items, discounts, total and payments out of the printed receipt text."""
+def _item_start(lines: list[str]) -> int | None:
+    """Index of the first item line: after the column header, or (no header) after the separator above
+    the first priced line."""
+    for i, line in enumerate(lines):
+        if _HEADER.match(line):
+            return i + 1
+    sep = None
+    for i, line in enumerate(lines):
+        if _TOTAL.match(line):
+            break
+        if _SEPARATOR.match(line) and line.strip():
+            sep = i
+        elif _ITEM.match(line) and sep is not None:
+            return sep + 1
+    return None
+
+
+def parse_receipt_lines(lines: list[str], receipt_id: str | None = None) -> dict[str, Any]:
+    """Pull items, discounts, total and payments out of the printed receipt text.
+
+    Item layouts: ``NAME  1,19``; a name line followed by ``2 X 1,25  2,50`` or ``0,512 kg x 3,49  1,79``
+    (that name line may itself end in something that looks like a price, e.g. ``... 0,01``); names wrapped
+    over several lines; negative lines (discounts, or returned deposit); ``P`` marks a Bonus price."""
     items: list[Line] = []
     discounts: list[Discount] = []
     payments: list[Payment] = []
     total: float | None = None
     deposit_returned = 0.0
-    in_items = False
+    start = _item_start(lines)
+    i = start if start is not None else len(lines)
     pending: str | None = None
-    for line in lines:
-        stripped = line.strip()
-        if "OMSCHRIJVING" in line.upper():
-            in_items = True
+    while i < len(lines):
+        line, stripped = lines[i], lines[i].strip()
+        i += 1
+        m = _TOTAL.match(line)
+        if m:
+            total = _num(m.group(3))
+            break
+        if _SUBTOTAL.match(line) or _SEPARATOR.match(line):
             continue
-        if in_items:
-            if stripped.upper().startswith("TOTAAL"):
-                m = re.search(_AMOUNT, stripped)
-                total = _num(m.group(0)) if m else None
-                in_items = False
-                pending = None
-                continue
-            if not stripped or set(stripped) <= set("=-*"):
-                continue
-            m = _MULT.match(line)
-            if m and pending:
-                qty, is_kg, unit, amount = _num(m.group(1)), bool(m.group(2)), _num(m.group(3)), _num(m.group(4))
-                items.append(
-                    Line(
-                        name=pending,
-                        amount=amount,
-                        quantity=1 if is_kg else qty,
-                        weight=qty if is_kg else None,
-                        weight_unit="KG" if is_kg else None,
-                        unit_price=unit,
-                        is_bonus=bool(re.search(r"\sP\s", line)),
-                    )
+        nxt = next((ln for ln in lines[i:] if not _SEPARATOR.match(ln)), "")
+        m = _MULT.match(line)
+        if m:
+            qty, is_kg, unit, amount = _num(m.group(1)), bool(m.group(2)), _num(m.group(3)), _num(m.group(4))
+            name = pending or (items[-1].name if items else "?")
+            items.append(
+                Line(
+                    name=name,
+                    amount=amount,
+                    quantity=1 if is_kg else qty,
+                    weight=qty if is_kg else None,
+                    weight_unit="KG" if is_kg else None,
+                    unit_price=unit,
+                    is_bonus=bool(re.search(r"\sP\s", line)),
                 )
-                pending = None
-                continue
-            m = _ITEM.match(line)
-            if m:
-                name = f"{pending} {m.group(1).strip()}".strip() if pending else m.group(1).strip()
-                amount = _num(m.group(2))
-                if amount < 0:
-                    discounts.append(Discount(amount=round(-amount, 2), name=name or "Korting", type="KORTING"))
-                else:
-                    items.append(Line(name=name or "?", amount=amount, unit_price=amount, is_bonus=" P " in line))
-                pending = None
-            else:
-                pending = stripped
+            )
+            pending = None
             continue
+        m = _ITEM.match(line)
+        if m and not _MULT.match(nxt):
+            name = f"{pending} {m.group(1).strip()}".strip() if pending else m.group(1).strip()
+            amount = _num(m.group(2))
+            if amount < 0 and not _NOT_A_PRODUCT.match(name):
+                discounts.append(Discount(amount=round(-amount, 2), name=name or "Korting", type="KORTING"))
+            else:  # a negative deposit line is bottles handed in: keep it, it is part of the total
+                items.append(Line(name=name or "?", amount=amount, unit_price=amount, is_bonus=" P " in line))
+            pending = None
+        else:  # a name without a price: the price (or the "2 X ..." line) follows
+            pending = f"{pending} {stripped}" if pending else stripped
+    # payments: the block right after the total, up to the next separator or the card slip / VAT table
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        if _SEPARATOR.match(line) or _PAYMENT_END.match(line):
+            break
         m = _DEPOSIT_RETURN.search(line)
         if m:
             deposit_returned += _num(m.group(2))
             continue
         m = _PAYMENT.match(line)
         if m:
-            payments.append(Payment(method=m.group(1).upper(), amount=_num(m.group(2))))
+            payments.append(Payment(method=re.sub(r"\s+", " ", m.group(1)).upper(), amount=_num(m.group(2))))
     if deposit_returned:
         payments.append(Payment(method="EMBALLAGE", amount=round(deposit_returned, 2)))
+    lines_total = round(sum(ln.amount for ln in items) - sum(d.amount for d in discounts), 2)
     if total is None:
-        total = round(sum(i.amount for i in items) - sum(d.amount for d in discounts), 2)
+        total = lines_total
+    elif abs(lines_total - total) > 0.011:
+        log.warning(
+            "Jumbo receipt %s: lines add up to %.2f but the receipt total is %.2f; "
+            "please report it with `groceries export-raw --redact`",
+            receipt_id or "?",
+            lines_total,
+            total,
+        )
     for ln in items:
-        # bottle deposit and carrier bags are not products
-        is_product = not re.match(r"^(STATIEGELD|EMBALLAGE|LEEGGOED|JUMBO LUSDRAAGTAS|DRAAGTAS)\b", ln.name, re.I)
-        ln.product_key = name_key(ln.name) if is_product else None
+        ln.product_key = None if _NOT_A_PRODUCT.match(ln.name) else name_key(ln.name)
     return {"lines": items, "discounts": discounts, "payments": payments, "total": total}
 
 
@@ -184,9 +233,63 @@ def name_key(name: str) -> str:
     return "name:" + re.sub(r"\s+", " ", name.strip().upper())
 
 
+_STOP_WORDS = {"JUMBO", "JU", "JUM", "DE", "HET", "MET", "EN", "VAN", "IN", "OP", "STUKS", "ST", "STUK"}
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in re.split(r"[^0-9A-ZÀ-Ü]+", text.upper()) if w]
+
+
+def _word_matches(word: str, title_words: list[str]) -> bool:
+    """Receipt names are cut short and glue words together ('KRENTENBOL', 'VOLK', 'PNDKS',
+    'MINIPAPRIKA'): a prefix, a compound part, or an abbreviation (same first letter, letters in
+    order) of a title word counts."""
+    for t in title_words:
+        if t.startswith(word) or (len(t) >= 3 and word.startswith(t)):
+            return True
+        if (len(t) >= 5 and t in word) or (len(word) >= 5 and word in t):
+            return True
+        if len(word) >= 4 and word[0] == t[0] and len(word) * 2 >= len(t):
+            it = iter(t)
+            if all(c in it for c in word):
+                return True
+    return False
+
+
+def _name_words(name: str) -> list[str]:
+    return [w for w in _words(name) if len(w) >= 3 and not any(c.isdigit() for c in w) and w not in _STOP_WORDS]
+
+
+def title_score(name: str, title: str) -> float:
+    """Share of the receipt name's meaningful words found in a catalogue title (0..1)."""
+    words = _name_words(name)
+    if not words:
+        return 0.0
+    title_words = _words(title)
+    return sum(_word_matches(w, title_words) for w in words) / len(words)
+
+
+def title_matches(name: str, title: str) -> bool:
+    """Whether a catalogue title plausibly is the product on the receipt: most of its words match, or
+    half of them including the first (usually the brand or the product itself)."""
+    words = _name_words(name)
+    score = title_score(name, title)
+    return score >= 0.6 or (score >= 0.5 and _word_matches(words[0], _words(title)))
+
+
+def best_hit(name: str, hits: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The search hit whose title resembles the receipt name most, or None when none does."""
+    scored = [
+        (title_score(name, h["title"]), -n, h)
+        for n, h in enumerate(hits)
+        if (h.get("title") or "").strip() and title_matches(name, h["title"])
+    ]
+    return max(scored, key=lambda x: x[:2])[2] if scored else None
+
+
 def parse_receipt(summary: dict[str, Any], receipt: dict[str, Any]) -> Purchase:
     image = (receipt.get("receiptImage") or {}).get("image") or "{}"
-    parsed = parse_receipt_lines(receipt_text_lines(image))
+    parsed = parse_receipt_lines(receipt_text_lines(image), summary.get("transactionId"))
     store = receipt.get("store") or summary.get("store") or {}
     addr = ((store.get("location") or {}).get("address")) or {}
     street = " ".join(p for p in (addr.get("street"), addr.get("houseNumber")) if p) or store.get("name")
@@ -427,17 +530,27 @@ class Jumbo(Provider):
 
     def fetch_purchase(self, ref: PurchaseRef) -> tuple[dict[str, Any], Purchase]:
         if ref.channel == "online":
-            return {"summary": ref.summary}, parse_order(ref.summary)
+            raw: dict[str, Any] = {"summary": ref.summary}
+            return raw, self.parse_raw("online", raw)
         for candidate in receipt_id_candidates(ref.external_id):
             # an id form the server does not like may come back as an error: try the next one
             receipt = self.graphql(RECEIPT_QUERY, {"transactionId": candidate}, strict=False).get("receipt")
             if receipt:
-                return {"summary": ref.summary, "detail": receipt}, parse_receipt(ref.summary, receipt)
+                raw = {"summary": ref.summary, "detail": receipt}
+                return raw, self.parse_raw("store", raw)
         raise RuntimeError(f"Jumbo receipt {ref.external_id} not found under any id form")
+
+    def parse_raw(self, channel: str, raw: dict[str, Any]) -> Purchase:
+        if channel == "online":
+            return parse_order(raw["summary"])
+        return parse_receipt(raw["summary"], raw["detail"])
 
     def lookup_products(self, items: list[tuple[str, str]]) -> Iterator[ProductInfo]:
         """Map receipt names to catalogue titles via search. Category is not exposed by the
-        search query known so far, so Jumbo products stay uncategorized for now (UNVERIFIED)."""
+        search query known so far, so Jumbo products stay uncategorized for now (UNVERIFIED).
+
+        The search always returns something, often a promoted product first, so a hit is only used
+        when its title resembles the receipt name (see ``title_matches``)."""
         for key, name in items:
             if not self._search_ok:
                 return
@@ -451,12 +564,16 @@ class Jumbo(Provider):
                 self._search_ok = False  # schema changed or unavailable; stop for this run
                 return
             hits = (data.get("searchProducts") or {}).get("products") or []
-            if hits:
+            best = best_hit(name, hits)
+            if best:
                 yield ProductInfo(
-                    product_key=key, lookup_state="ok", webshop_id=hits[0].get("sku"), title=hits[0].get("title")
+                    product_key=key, lookup_state="ok", webshop_id=best.get("sku"), title=best["title"].strip()
                 )
             else:
                 yield ProductInfo(product_key=key, lookup_state="missing")
+
+    def title_matches(self, name: str, title: str) -> bool:
+        return title_matches(name, title)
 
     def begin_login(self, state: str) -> tuple[str, dict[str, Any]]:
         verifier, challenge = pkce_pair()

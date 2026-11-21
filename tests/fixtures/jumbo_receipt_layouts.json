@@ -1,0 +1,181 @@
+{
+ "padded_mixed": {
+  "note": "weighed, multi-buy, wrapped name that ends in a price-like number, Bonus, discount, deposit, bag, plastic levy",
+  "total": 21.38,
+  "lines": 11,
+  "discounts": [
+   1.0,
+   0.6
+  ],
+  "payments": [
+   [
+    "MASTERCARD",
+    21.38
+   ]
+  ],
+  "summary": {
+   "transactionId": "testpadded-00000000-0000-4000-8000-000000000002.json",
+   "purchaseEndOn": "2025-06-01 10:00:00",
+   "receiptSource": "CASHIER",
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   }
+  },
+  "detail": {
+   "receiptImage": {
+    "image": "{\"documents\": [{\"documents\": [{\"printSections\": [{\"textObjects\": [{\"textLines\": [{\"texts\": [{\"text\": \"VOORBEELDSTRAAT 1\"}]}, {\"texts\": [{\"text\": \"1234 AB VOORBEELDSTAD\"}]}, {\"texts\": [{\"text\": \"==========================================\"}]}, {\"texts\": [{\"text\": \"OMSCHRIJVING                 BEDRAG IN EUR\"}]}, {\"texts\": [{\"text\": \"==========================================\"}]}, {\"texts\": [{\"text\": \"TEST HALFVOLLE MELK      \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      1,19\"}]}, {\"texts\": [{\"text\": \"TEST APPELS              \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"  0,512 kg x 3,49        \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      1,79\"}]}, {\"texts\": [{\"text\": \"TEST YOGHURT             \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"  2 X 1,25               \"}, {\"text\": \"P   \"}, {\"text\": \"   \"}, {\"text\": \"      2,50\"}]}, {\"texts\": [{\"text\": \"TEST WATER 0,50          \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"  2 X 0,79               \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      1,58\"}]}, {\"texts\": [{\"text\": \"NL INCL.HEF.SUP 0,01     \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"  2 X 0,00               \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      0,00\"}]}, {\"texts\": [{\"text\": \"TEST COLA 1,5L           \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      1,89\"}]}, {\"texts\": [{\"text\": \"STATIEGELD               \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      0,15\"}]}, {\"texts\": [{\"text\": \"TEST KAAS JONG 48+       \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      6,49\"}]}, {\"texts\": [{\"text\": \"ACTIE TEST KAAS          \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"     -1,00\"}]}, {\"texts\": [{\"text\": \"PAPIEREN TAS         \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      0,15\"}]}, {\"texts\": [{\"text\": \"JUMBO LUSDRAAGTAS        \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      0,25\"}]}, {\"texts\": [{\"text\": \"TEST KOFFIEBONEN         \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      6,99\"}]}, {\"texts\": [{\"text\": \"KORTING 2E HALVE PRIJS   \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"     -0,60\"}]}, {\"texts\": [{\"text\": \"Totaal                        \"}, {\"text\": \"       21,38\"}]}, {\"texts\": [{\"text\": \"Betaald:\"}]}, {\"texts\": [{\"text\": \"MASTERCARD                    \"}, {\"text\": \"       21,38\"}]}, {\"texts\": [{\"text\": \"-----------------------------------------\"}]}, {\"texts\": [{\"text\": \"  Customer's receipt\"}]}, {\"texts\": [{\"text\": \" Card: 000000xxxxxx0000\"}]}, {\"texts\": [{\"text\": \" Total:     21,38 EUR\"}]}, {\"texts\": [{\"text\": \"-----------------------------------------\"}]}, {\"texts\": [{\"text\": \"Totaal korting:                      -1,60\"}]}]}]}]}]}]}",
+    "type": "JSON"
+   },
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   },
+   "purchaseEndOn": "2025-06-01 10:00:00",
+   "receiptSource": "CASHIER"
+  }
+ },
+ "unpadded_cells": {
+  "note": "a till that sends name and amount as separate cells without padding: every line must keep its own name",
+  "total": 7.47,
+  "lines": 3,
+  "discounts": [],
+  "payments": [
+   [
+    "PIN",
+    7.47
+   ]
+  ],
+  "summary": {
+   "transactionId": "testunpadd-00000000-0000-4000-8000-000000000003.json",
+   "purchaseEndOn": "2025-06-02 10:00:00",
+   "receiptSource": "CASHIER",
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   }
+  },
+  "detail": {
+   "receiptImage": {
+    "image": "{\"documents\": [{\"documents\": [{\"printSections\": [{\"textObjects\": [{\"textLines\": [{\"texts\": [{\"text\": \"OMSCHRIJVING\"}, {\"text\": \"BEDRAG\"}]}, {\"texts\": [{\"text\": \"TEST BROOD WIT\"}, {\"text\": \"2,49\"}]}, {\"texts\": [{\"text\": \"TEST BOTER\"}, {\"text\": \"P\"}, {\"text\": \"1,99\"}]}, {\"texts\": [{\"text\": \"TEST EIEREN 10ST\"}, {\"text\": \"2,99\"}]}, {\"texts\": [{\"text\": \"Totaal\"}, {\"text\": \"7,47\"}]}, {\"texts\": [{\"text\": \"PIN\"}, {\"text\": \"7,47\"}]}]}]}]}]}]}",
+    "type": "JSON"
+   },
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   },
+   "purchaseEndOn": "2025-06-02 10:00:00",
+   "receiptSource": "CASHIER"
+  }
+ },
+ "wrapped_and_split_payment": {
+  "note": "a name wrapped over two lines, a subtotal line, bottles handed in, two payment methods, a card slip",
+  "total": 15.0,
+  "lines": 5,
+  "discounts": [
+   4.99
+  ],
+  "payments": [
+   [
+    "CADEAUKAART",
+    10.0
+   ],
+   [
+    "PIN",
+    5.0
+   ]
+  ],
+  "summary": {
+   "transactionId": "testwrappe-00000000-0000-4000-8000-000000000004.json",
+   "purchaseEndOn": "2025-06-03 10:00:00",
+   "receiptSource": "CASHIER",
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   }
+  },
+  "detail": {
+   "receiptImage": {
+    "image": "{\"documents\": [{\"documents\": [{\"printSections\": [{\"textObjects\": [{\"textLines\": [{\"texts\": [{\"text\": \"OMSCHRIJVING                 BEDRAG IN EUR\"}]}, {\"texts\": [{\"text\": \"TEST BIOLOGISCHE GRIEKSE \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"YOGHURT VOLLE 1KG        \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      3,49\"}]}, {\"texts\": [{\"text\": \"TEST PASTA FUSILLI       \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      1,29\"}]}, {\"texts\": [{\"text\": \"TEST WASMIDDEL           \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"  3 X 4,99               \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"     14,97\"}]}, {\"texts\": [{\"text\": \"ACTIE 3 HALEN 2 BETALEN  \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"     -4,99\"}]}, {\"texts\": [{\"text\": \"Subtotaal                     \"}, {\"text\": \"       14,76\"}]}, {\"texts\": [{\"text\": \"STATIEGELD RETOUR        \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"     -0,50\"}]}, {\"texts\": [{\"text\": \"TEST FRISDRANK           \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      0,74\"}]}, {\"texts\": [{\"text\": \"Totaal                        \"}, {\"text\": \"       15,00\"}]}, {\"texts\": [{\"text\": \"Betaald:\"}]}, {\"texts\": [{\"text\": \"CADEAUKAART                   \"}, {\"text\": \"       10,00\"}]}, {\"texts\": [{\"text\": \"PIN                           \"}, {\"text\": \"        5,00\"}]}, {\"texts\": [{\"text\": \"BTW overzicht\"}]}, {\"texts\": [{\"text\": \"BTW%          Bedrag excl     BTW bedrag\"}]}, {\"texts\": [{\"text\": \"     9,00%           5,05           0,45\"}]}]}]}]}]}]}",
+    "type": "JSON"
+   },
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   },
+   "purchaseEndOn": "2025-06-03 10:00:00",
+   "receiptSource": "CASHIER"
+  }
+ },
+ "no_header_cash": {
+  "note": "no column header; cash with change",
+  "total": 3.38,
+  "lines": 2,
+  "discounts": [],
+  "payments": [
+   [
+    "CONTANT",
+    5.0
+   ],
+   [
+    "WISSELGELD",
+    -1.62
+   ]
+  ],
+  "summary": {
+   "transactionId": "testno_hea-00000000-0000-4000-8000-000000000005.json",
+   "purchaseEndOn": "2025-06-04 10:00:00",
+   "receiptSource": "CASHIER",
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   }
+  },
+  "detail": {
+   "receiptImage": {
+    "image": "{\"documents\": [{\"documents\": [{\"printSections\": [{\"textObjects\": [{\"textLines\": [{\"texts\": [{\"text\": \"TEST SUPERMARKT\"}]}, {\"texts\": [{\"text\": \"-----------------------------------------\"}]}, {\"texts\": [{\"text\": \"TEST PEREN             \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"          \"}]}, {\"texts\": [{\"text\": \"  1,250 kg x 1,99        \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      2,49\"}]}, {\"texts\": [{\"text\": \"TEST KOEKJES             \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      0,89\"}]}, {\"texts\": [{\"text\": \"Totaal                        \"}, {\"text\": \"        3,38\"}]}, {\"texts\": [{\"text\": \"CONTANT                       \"}, {\"text\": \"        5,00\"}]}, {\"texts\": [{\"text\": \"WISSELGELD                    \"}, {\"text\": \"       -1,62\"}]}]}]}]}]}]}",
+    "type": "JSON"
+   },
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   },
+   "purchaseEndOn": "2025-06-04 10:00:00",
+   "receiptSource": "CASHIER"
+  }
+ },
+ "does_not_add_up": {
+  "note": "lines and total disagree: parsed anyway, with a warning naming the receipt",
+  "total": 5.0,
+  "lines": 1,
+  "discounts": [],
+  "payments": [
+   [
+    "PIN",
+    5.0
+   ]
+  ],
+  "mismatch": true,
+  "summary": {
+   "transactionId": "testdoes_n-00000000-0000-4000-8000-000000000006.json",
+   "purchaseEndOn": "2025-06-05 10:00:00",
+   "receiptSource": "CASHIER",
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   }
+  },
+  "detail": {
+   "receiptImage": {
+    "image": "{\"documents\": [{\"documents\": [{\"printSections\": [{\"textObjects\": [{\"textLines\": [{\"texts\": [{\"text\": \"OMSCHRIJVING\"}]}, {\"texts\": [{\"text\": \"TEST THEE                \"}, {\"text\": \"    \"}, {\"text\": \"   \"}, {\"text\": \"      2,00\"}]}, {\"texts\": [{\"text\": \"Totaal\"}, {\"text\": \"  5,00\"}]}, {\"texts\": [{\"text\": \"PIN\"}, {\"text\": \"  5,00\"}]}]}]}]}]}]}",
+    "type": "JSON"
+   },
+   "store": {
+    "storeId": "9999",
+    "name": "Jumbo Voorbeeldstad"
+   },
+   "purchaseEndOn": "2025-06-05 10:00:00",
+   "receiptSource": "CASHIER"
+  }
+ }
+}

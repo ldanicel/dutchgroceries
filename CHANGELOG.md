@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: Jumbo products got the wrong name.** The product lookup took the first search result for every
+  receipt name, and Jumbo's search often puts the same promoted product first, so different products
+  ended up with one catalogue title (for example every kind of fruit). A search hit is now only used when
+  its title resembles the receipt name; otherwise the receipt name is shown.
+- **Fix: Jumbo receipt parsing.** A product name that itself ends in a price-like number (`... 0,01`)
+  followed by a `2 X 0,79` line became two lines, one of them named `2 X 0,79`. Tills that send name and
+  price as unpadded cells are read correctly. Also handled: receipts without the `OMSCHRIJVING` header,
+  names wrapped over several lines, subtotal lines, returned bottle deposit, the plastic levy line, paper
+  bags, several payment methods and cash change. Payments are read only from the block after the total.
+- A Jumbo receipt whose lines do not add up to its total is logged with its id.
+
 ## v1.1.0 – 2026-11-19
 
 - **Several accounts per supermarket**: connect more than one Albert Heijn or Jumbo account (for
