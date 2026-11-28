@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.3.0 – 2026-11-28
+
+- **Time range**: a *Period* selector in the header with All time, Last week, Last month, Last quarter,
+  Last year and Last 2 years. Each is a rolling window ending today. Every tile, chart and table follows
+  it, including the price history and the price changes. The choice is kept in the URL (`?range=quarter`)
+  and remembered in the browser.
+- The last week and the last month are charted per day (days without purchases show as zero); longer
+  periods per month.
+- Biggest price changes need half the selected period (at most 120 days) between a product's first and
+  last purchase, so shorter periods still show changes.
+- API: every dashboard endpoint takes `range=all|week|month|quarter|year|2y`.
+- `groceries stats --range quarter` prints the summary for a period.
+
+## v1.2.1 – 2026-11-21
+
+- **Automatic reimport after an upgrade.** The first time `groceries serve` or `groceries sync` starts
+  with a different version, it re-parses the saved raw responses of the stored purchases once (like
+  `groceries reimport`), so parser fixes also reach purchases synced earlier. It logs every changed
+  receipt and a summary. The dashboard starts right away (it runs in the background); an error is
+  logged, never stops the sync or the dashboard, and is retried on the next start. It does nothing on a
+  new database or when the version did not change. The database stores the last version in a new
+  `meta` table. Turn it off with `GROCERIES_AUTO_REIMPORT=false` (`0`, `no`, `off` and `disabled` work
+  too; an unknown value keeps the default and logs a warning).
+- **`groceries accounts remove --purge` also deletes the account's saved raw responses**, so a later
+  `groceries reimport` cannot bring the purchases back.
+- Fix: `groceries reimport` of a raw file without a stored purchase added it to a second "Main" account
+  and failed; it now goes to the retailer's existing account. A purchase that cannot be stored is
+  counted as failed and the others carry on.
+- **`groceries --version`**. The version is also shown in the dashboard footer and returned by
+  `/healthz` (`{"status": "ok", "version": "1.2.1"}`).
+- README: new *Upgrading* section for Docker and venv/systemd installs. Fixed the Docker command prefix:
+  it is `docker compose exec web groceries …` (the services are `web` and `sync`).
+
 ## v1.2.0 – 2026-11-21
 
 - **Fix: Jumbo products got the wrong name.** The product lookup took the first search result for every

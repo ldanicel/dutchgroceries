@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+_TRUE = ("1", "true", "yes", "y", "on", "enabled")
+_FALSE = ("0", "false", "no", "n", "off", "disabled")
 
 
 def load_env_file(path: str | os.PathLike[str] | None) -> None:
@@ -23,6 +29,21 @@ def load_env_file(path: str | os.PathLike[str] | None) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
         os.environ.setdefault(key.strip(), value)
+
+
+def env_flag(name: str, default: bool) -> bool:
+    """A yes/no setting. Case, spaces and quotes do not matter; an empty value means the default, and so
+    does a value that is neither yes nor no (with a warning)."""
+    raw = os.environ.get(name)
+    value = (raw or "").strip().strip("\"'").strip().lower()
+    if not value:
+        return default
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    log.warning("%s=%r is not a yes/no value; using the default (%s)", name, raw, str(default).lower())
+    return default
 
 
 @dataclass
@@ -47,6 +68,7 @@ class Config:
     alert_resolved_title: str = "✅ Resolved: {retailer} sync{account}"
     retailers: list[str] = field(default_factory=list)  # empty: every retailer that has a stored login
     public_prices: bool = False  # refresh public shelf prices (checkjebon) after the sync, weekly
+    auto_reimport: bool = True  # re-parse the saved purchases once after an upgrade (see upgrade.py)
 
     @property
     def db_path(self) -> Path:
@@ -81,5 +103,6 @@ class Config:
             alert_fail_title=env("GROCERIES_ALERT_FAIL_TITLE", cls.alert_fail_title),
             alert_resolved_title=env("GROCERIES_ALERT_RESOLVED_TITLE", cls.alert_resolved_title),
             retailers=[r.strip() for r in env("GROCERIES_RETAILERS", "").split(",") if r.strip()],
-            public_prices=env("GROCERIES_PUBLIC_PRICES", "").lower() in ("1", "true", "yes", "on"),
+            public_prices=env_flag("GROCERIES_PUBLIC_PRICES", False),
+            auto_reimport=env_flag("GROCERIES_AUTO_REIMPORT", True),
         )

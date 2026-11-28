@@ -9,6 +9,7 @@ import json
 import logging
 import sys
 
+from . import __version__
 from .config import Config
 from .providers import PROVIDERS, get_provider
 
@@ -16,6 +17,7 @@ from .providers import PROVIDERS, get_provider
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="groceries", description="Sync and analyze supermarket purchase history.")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--version", action="version", version=f"dutchgroceries {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     acc_help = "store account name or id (default: the first account; a new name adds an account)"
@@ -70,7 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--months", type=int, default=24)
 
     sub.add_parser("serve", help="run the web dashboard")
-    sub.add_parser("stats", help="print a summary as JSON")
+    st = sub.add_parser("stats", help="print a summary as JSON")
+    st.add_argument(
+        "--range",
+        choices=["all", "week", "month", "quarter", "year", "2y"],
+        default="all",
+        help="only the last week, month, quarter, year or 2 years (rolling, ending today)",
+    )
 
     args = ap.parse_args(argv)
     logging.basicConfig(
@@ -120,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import accounts
         from .db import connect
         from .sync import run_sync
+        from .upgrade import run_on_start
 
         conn = connect(config.db_path)
         accounts.migrate_legacy(conn, config)
@@ -131,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
             except accounts.AccountError as e:
                 raise SystemExit(str(e)) from None
             only, args.retailers = acc["id"], [acc["retailer"]]
+        run_on_start(config)
         targets = (
             args.retailers
             or config.retailers
@@ -186,20 +196,24 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "serve":
         import uvicorn
 
+        from .upgrade import start_in_background
         from .web import create_app
 
+        app = create_app(config)  # creates/migrates the schema
+        start_in_background(config)
         uvicorn.run(
-            create_app(config),
+            app,
             host=config.host,
             port=config.port,
             log_level="info",
             proxy_headers=False,  # the app applies X-Forwarded-* itself, for GROCERIES_TRUSTED_PROXIES only
         )
     elif args.cmd == "stats":
-        from .analytics import Analytics
+        from .analytics import Analytics, range_start
         from .db import connect
 
-        print(json.dumps(Analytics(connect(config.db_path)).tldr(), indent=2, ensure_ascii=False))
+        a = Analytics(connect(config.db_path), since=range_start(args.range))
+        print(json.dumps(a.tldr(), indent=2, ensure_ascii=False))
     return 0
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dutchgroceries"
-version = "1.2.0"
+dynamic = ["version"]
 description = "Self-hosted supermarket purchase history for Albert Heijn and Jumbo: sync your receipts, see what you spend and how prices change."
 readme = "README.md"
 license = "MIT"
@@ -25,6 +25,9 @@ Issues = "https://github.com/ldanicel/dutchgroceries/issues"
 
 [project.scripts]
 groceries = "groceries.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "groceries.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
