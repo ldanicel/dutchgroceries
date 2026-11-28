@@ -45,6 +45,7 @@ change over time.
   top products, price history per product with a regular-price line built from your own receipts,
   biggest price changes, a personal price index, Bonus and discount savings, basket size, stores,
   recent purchases.
+- **Drill down**: click any bar, store or shelf-price row to see the products and receipts behind it.
 - **Time range**: look at the last week, month, quarter, year or 2 years, or all time. Every tile, chart
   and table follows the selection; it is kept in the URL (`?range=quarter`), so a view can be bookmarked.
 - **Connect from the browser**: a card per account with Connect, Sync now, Reconnect, Rename and Disconnect.
@@ -314,6 +315,7 @@ mapping JSON file for any other bank (see `src/groceries/importers/bank.py`). Th
 | `groceries import-prices checkjebon [--since 2022-11-01] [--every-days 7] [--full]` | Backfill public shelf prices. |
 | `groceries import-bank FILE.csv [--format ing\|generic\|mapping.json]` | Import supermarket payments from a bank CSV. |
 | `groceries demo-seed [--months 24]` | Fill an empty data directory with synthetic purchases. |
+| `groceries categorize [--dry-run]` | Infer categories for products the retailer gives none (no network). |
 | `groceries stats [--range week\|month\|quarter\|year\|2y]` | Print a JSON summary, optionally for a rolling period ending today. |
 | `groceries --version` | Print the installed version (also in the dashboard footer and `/healthz`). |
 

@@ -335,7 +335,8 @@ class Analytics:
         }
 
     def market_changes(self, limit: int = 25, by: str = "spend") -> list[dict[str, Any]]:
-        """Long-term shelf price change from public data, for the products you buy most.
+        """Long-term shelf price change from public data, for the products you buy most (in the
+        selected period, if any; the price change always spans all the public data).
 
         Compares the median listed price in the first and in the latest month that has data,
         which smooths out single-day promotions.
@@ -356,16 +357,14 @@ class Analytics:
         for t in top:
             rows = self.conn.execute(
                 "SELECT substr(date, 1, 7) AS month, price FROM market_prices WHERE retailer = ? AND product_key = ?"
-                " AND date >= ? ORDER BY date",
-                (t["retailer"], t["product_key"], (self.since or "")[:7]),
+                " ORDER BY date",
+                (t["retailer"], t["product_key"]),
             ).fetchall()
             series, _note = clean_shelf_prices(rows, {})
             valid = [x for x in series if x["price"] is not None]
             if not valid:
                 continue
             first, last = valid[0]["date"][:7], valid[-1]["date"][:7]
-            if self.since and first == last:
-                continue  # one month of public data in this period: nothing to compare
             old, new = valid[0]["price"], valid[-1]["price"]
             out.append(
                 {
@@ -380,15 +379,17 @@ class Analytics:
             )
         return out
 
-    def price_changes(self, min_points: int = 4, min_days: int | None = None, limit: int = 25) -> list[dict[str, Any]]:
+    def price_changes(self, min_points: int = 4, min_days: int = 120, limit: int = 25) -> list[dict[str, Any]]:
         """Compare the median shelf price of a product's first and last ~quarter of observations.
 
-        `min_days` defaults to 120, or half the selected period when that is shorter."""
-        if min_days is None:
-            min_days = 120
-            if self.since:
-                min_days = min(120, (date.today() - date.fromisoformat(self.since)).days // 2)
-        f, a = self._filter()
+        With a period (`since`): only products bought in that period, and their price then (the
+        median of what you paid in the period) against their first prices over all history.
+        """
+        since, self.since = self.since, None
+        try:
+            f, a = self._filter()
+        finally:
+            self.since = since
         rows = self.conn.execute(
             f"""SELECT l.retailer, l.product_key, COALESCE(pr.title, l.name) AS name, l.weight_unit,
                        p.local_date, l.unit_price
@@ -409,8 +410,13 @@ class Analytics:
             if (d1 - d0).days < min_days:
                 continue
             k = max(1, len(obs) // 4)
+            recent = obs[-k:]
+            if since:
+                recent = [o for o in obs if o["local_date"] >= since]
+                if not recent:
+                    continue  # not bought in this period
             old = statistics.median(o["unit_price"] for o in obs[:k])
-            new = statistics.median(o["unit_price"] for o in obs[-k:])
+            new = statistics.median(o["unit_price"] for o in recent)
             if old <= 0:
                 continue
             out.append(
@@ -488,6 +494,92 @@ class Analytics:
                 ORDER BY ts_utc DESC LIMIT ?""",
             [*a, limit],
         )
+
+    def drill(
+        self,
+        period: str | None = None,
+        category: str | None = None,
+        channel: str | None = None,
+        other_than: list[str] | None = None,
+        store: str | None = None,
+        with_lines: bool = False,
+    ) -> dict[str, Any]:
+        """What is behind one bar of a chart: the products (summed) and the purchases.
+
+        `period`: a month (2026-11) or a day (2026-11-28); `category`: one category (the unknown
+        bucket is `UNKNOWN`); `other_than`: every category except these (the "Overig" bar);
+        `channel`: store or online; `store`: a store id ('' for purchases without one).
+        Purchase spend is the spend in the selection: with a category, only those lines.
+        `with_lines`: every purchase also carries its receipt lines (in the selection) and discounts.
+        """
+        f, a = self._filter()
+        where, args = "", list(a)
+        if period:
+            where += f" AND substr(p.local_date, 1, {len(period)}) = ?"
+            args.append(period)
+        if channel:
+            where += " AND p.channel = ?"
+            args.append(channel)
+        if store is not None:
+            where += " AND COALESCE(p.store_id, '') = ?"
+            args.append(store)
+        cat = f"COALESCE(pr.category, '{UNKNOWN}')"
+        line_where = ""
+        if category:
+            line_where += f" AND {cat} = ?"
+            args.append(category)
+        if other_than:
+            line_where += f" AND {cat} NOT IN ({','.join('?' * len(other_than))})"
+            args.extend(other_than)
+        base = f"""FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
+                   LEFT JOIN products pr ON pr.retailer = l.retailer AND pr.product_key = l.product_key
+                   WHERE l.amount > 0 AND COALESCE(l.product_key, '') NOT IN ('stamps') {f} {where} {line_where}"""
+        items = self._rows(
+            f"""SELECT l.retailer, l.product_key, COALESCE(pr.title, MAX(l.name)) AS name, {cat} AS category,
+                       pr.unit_size, COUNT(DISTINCT l.purchase_id) AS times,
+                       ROUND(SUM(CASE WHEN l.weight IS NULL THEN l.quantity ELSE 0 END), 1) AS units,
+                       ROUND(SUM(l.weight), 3) AS weight, ROUND(SUM(l.amount), 2) AS spend,
+                       MAX(p.local_date) AS last,
+                       GROUP_CONCAT(DISTINCT CASE WHEN p.channel = 'online' THEN 'Online'
+                                                  ELSE p.store_street END) AS stores
+                {base}
+                GROUP BY l.retailer, COALESCE(l.product_key, l.name) ORDER BY spend DESC""",
+            args,
+        )
+        filtered = bool(category or other_than)
+        purchases = self._rows(
+            f"""SELECT p.id, p.retailer, p.channel, p.local_date, p.store_street, p.store_city,
+                       a.label AS account, p.item_count, p.discount_total AS saved,
+                       ROUND({"SUM(l.amount)" if filtered else _SPEND}, 2) AS spend, COUNT(*) AS lines
+                {base.replace("WHERE", "LEFT JOIN accounts a ON a.id = p.account_id WHERE", 1)}
+                GROUP BY p.id ORDER BY p.ts_utc DESC""",
+            args,
+        )
+        if with_lines and purchases:
+            by_id = {p["id"]: p for p in purchases}
+            for p in purchases:
+                p["lines"], p["discounts"] = [], []
+            for r in self._rows(
+                f"""SELECT l.purchase_id, l.retailer, l.product_key, COALESCE(pr.title, l.name) AS name,
+                           {cat} AS category, l.quantity, l.weight, l.weight_unit, l.unit_price, l.amount, l.is_bonus
+                    {base} ORDER BY l.purchase_id, l.line_no""",
+                args,
+            ):
+                by_id[r.pop("purchase_id")]["lines"].append(r)
+            if not filtered:
+                marks = ",".join("?" * len(by_id))
+                for r in self._rows(
+                    f"SELECT purchase_id, name, type, amount FROM discounts WHERE purchase_id IN ({marks}) "
+                    "ORDER BY idx",
+                    list(by_id),
+                ):
+                    by_id[r.pop("purchase_id")]["discounts"].append(r)
+        return {
+            "items": items,
+            "purchases": purchases,
+            "spend": round(sum(i["spend"] for i in items), 2),
+            "receipt_spend": round(sum(p["spend"] for p in purchases), 2),
+        }
 
     def purchase(self, purchase_id: str) -> dict[str, Any] | None:
         head = self._rows("SELECT * FROM purchases WHERE id = ?", (purchase_id,))

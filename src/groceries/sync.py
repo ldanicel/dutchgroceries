@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 from . import accounts
+from .categorize import infer_categories
 from .config import Config
 from .db import connect
 from .notify import Notifier
@@ -210,7 +211,10 @@ def _sync(
     where = (
         ""
         if refresh_products
-        else ("AND (p.lookup_state IS NULL OR (p.category IS NULL AND p.enriched_at < datetime('now', '-30 days')))")
+        else (
+            "AND (p.lookup_state IS NULL OR ((p.category IS NULL OR p.category_inferred = 2)"
+            " AND p.enriched_at < datetime('now', '-30 days')))"
+        )
     )
     items = [
         (r[0], r[1])
@@ -230,6 +234,10 @@ def _sync(
             with conn:
                 store_product(conn, provider.slug, info)
             res.products_enriched += 1
+    try:  # products the retailer gives no category (all of Jumbo's): infer one locally
+        log.info("%s: category inference: %s", provider.slug, infer_categories(conn))
+    except Exception:
+        log.warning("category inference failed (ignored)", exc_info=True)
     return res
 
 

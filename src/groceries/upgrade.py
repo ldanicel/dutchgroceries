@@ -86,6 +86,14 @@ def run_on_start(config: Config) -> None:
             "run `groceries reimport --dry-run` to see why",
             exc_info=True,
         )
+    conn.rollback()  # whatever a failed reimport left open must not be committed by the step below
+    try:  # cheap and local: new inference rules reach existing products without waiting for a sync
+        from .categorize import infer_categories
+
+        if conn.execute("SELECT 1 FROM products LIMIT 1").fetchone():
+            log.info("category inference: %s", infer_categories(conn))
+    except Exception:
+        log.warning("category inference on start failed (ignored)", exc_info=True)
     finally:
         try:
             conn.rollback()  # never leave a write transaction open: it would lock the database for the sync

@@ -52,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--receipt", help="only this purchase (receipt/order id or raw file name)")
     p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
 
+    p = sub.add_parser("categorize", help="infer categories for products the retailer gives none (no network)")
+    p.add_argument("--dry-run", action="store_true", help="show the counts, write nothing")
+
     p = sub.add_parser("export-raw", help="print the saved raw response of one purchase, e.g. for a bug report")
     p.add_argument("--receipt", required=True, help="receipt/order id or raw file name")
     p.add_argument("--redact", action="store_true", help="strip ids, card numbers, addresses and store details")
@@ -166,6 +169,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failed else 0
     elif args.cmd == "reimport":
         return _reimport(config, args)
+    elif args.cmd == "categorize":
+        from .categorize import infer_categories
+        from .db import connect
+
+        print(json.dumps(infer_categories(connect(config.db_path), dry_run=args.dry_run)))
+        return 0
     elif args.cmd == "export-raw":
         return _export_raw(config, args)
     elif args.cmd == "import-prices":

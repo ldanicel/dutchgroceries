@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.0 – 2026-11-28
+
+- **Click a bar to see what is behind it.** Every bar chart (spend per month or day, spend per category,
+  categories over time, savings, shopping trips, average basket, price index) opens a panel with the
+  products (quantity, spend, where, last bought) and the receipts behind that bar, for the selected
+  period. A receipt opens with all its lines and discounts; a product opens its price history.
+- **Stores visited**: click a store to see every visit with everything bought on it.
+- **Long-term shelf prices**: click a product to see every price change over time (public shelf prices
+  and what you paid), with a chart, the change from the previous price and since the first one.
+- **Biggest price changes with a period selected** lists the products bought in that period and compares
+  what you paid then with their first prices over all your history.
+- **Categories for products the retailer gives none.** Jumbo's search returns no category, so every Jumbo
+  product was "Onbekend". Categories are now inferred locally from Dutch grocery keywords and from similar
+  categorized products, after every sync and on start (`category_inferred = 2`; a retailer's own category
+  always wins). `groceries categorize [--dry-run]` runs it by hand.
+- API: `/api/drill?period=&category=&other_than=&channel=&store=&lines=`.
+
 ## v1.3.0 – 2026-11-28
 
 - **Time range**: a *Period* selector in the header with All time, Last week, Last month, Last quarter,
