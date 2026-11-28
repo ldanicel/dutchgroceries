@@ -60,3 +60,71 @@ def test_drill_api(config: Config, synced: FakeProvider) -> None:
     assert client.get("/api/drill", params={"period": "2025"}).status_code == 422
     assert client.get("/api/drill", params={"channel": "bike"}).status_code == 422
     assert client.get("/api/drill", params={"range": "week"}).json()["purchases"] == []
+
+
+def test_discounts_attach_to_their_line() -> None:
+    from groceries.analytics import attach_discounts
+
+    lines = [
+        {"product_key": "1", "receipt_name": "CHOCO CAKE", "name": "Example Choco cake", "amount": 2.97},
+        {
+            "product_key": "2",
+            "receipt_name": "WITTE DRUIVEN",
+            "name": "Example Witte druiven",
+            "amount": 2.59,
+            "is_bonus": 1,
+        },  # fmt: skip
+        {
+            "product_key": "3",
+            "receipt_name": "JAZZ APPELS",
+            "name": "Jazz Appels schaal",
+            "amount": 3.49,
+            "is_bonus": 1,
+        },
+        {
+            "product_key": "4",
+            "receipt_name": "JONG BELEGEN",
+            "name": "Example Jong belegen",
+            "amount": 4.44,
+            "is_bonus": 1,
+        },  # fmt: skip
+    ]
+    discounts = [
+        {"name": "AHWITTEDRUIV", "amount": 0.70},
+        {"name": "JAZZAPPELSSC", "amount": 0.50},
+        {"name": "BIOPREMIUMWI", "amount": 0.44},  # no name match: the one Bonus line left
+        {"name": "KOOPZEGELS", "amount": 0},
+    ]
+    attach_discounts(lines, discounts)
+    assert [d["line"] for d in discounts] == [1, 2, 3, None]
+    assert [ln["discount"] for ln in lines] == [0, 0.70, 0.50, 0.44]
+    assert lines[1]["discount_names"] == ["AHWITTEDRUIV"]
+
+
+def test_deals_over_several_products_are_split() -> None:
+    from groceries.analytics import attach_discounts
+
+    lines = [
+        {"product_key": "1", "receipt_name": "LU KOEK A", "name": "Example LU koek A", "amount": 2.0, "is_bonus": 1},
+        {"product_key": "2", "receipt_name": "LU KOEK B", "name": "Example LU koek B", "amount": 3.0, "is_bonus": 1},
+        {"product_key": "3", "receipt_name": "BIO MELK", "name": "AH Biologisch Melk", "amount": 1.5, "is_bonus": 1},
+        {
+            "product_key": "4",
+            "receipt_name": "BIO EIEREN",
+            "name": "AH Biologisch Eieren",
+            "amount": 4.5,
+            "is_bonus": 1,
+        },  # fmt: skip
+        {"product_key": "5", "receipt_name": "BROOD", "name": "Example Brood", "amount": 2.5},
+    ]
+    discounts = [
+        {"name": "ALLELUKOEK", "amount": 1.0},
+        {"name": "BIOPREMIUMST", "amount": 0.61},
+        {"name": "MIJN AH MILES", "amount": 1.0},
+    ]
+    attach_discounts(lines, discounts)
+    assert discounts[0]["split"] == [{"line": 0, "amount": 0.4}, {"line": 1, "amount": 0.6}]
+    assert [p["line"] for p in discounts[1]["split"]] == [2, 3]
+    assert round(sum(p["amount"] for p in discounts[1]["split"]), 2) == 0.61
+    assert discounts[2]["line"] is None  # a credit for no product stays on the receipt
+    assert lines[4]["discount"] == 0

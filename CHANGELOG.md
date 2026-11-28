@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.1 – 2026-11-28
+
+- Fix: the drill-down panel showed at the bottom of the page while closed.
+- Receipts and visits show each Bonus discount under the product it belongs to (matched by its cut-short
+  name, e.g. `WITTEDRUIV`). Deals over several products (`ALLELUKOEK`, the organic `BIOPREMIUM`) are split
+  over those products by amount; only discounts that match no product are listed separately.
+
 ## v1.4.0 – 2026-11-28
 
 - **Click a bar to see what is behind it.** Every bar chart (spend per month or day, spend per category,
