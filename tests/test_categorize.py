@@ -25,6 +25,7 @@ from groceries.db import SCHEMA
         ("OPLAADBAAR AAA", "Koken, tafelen, vrije tijd"),
         ("Najaarsbloemen", "Koken, tafelen, vrije tijd"),
         ("BLOEMKOOL", "Groente, aardappelen"),
+        ("Example Rauwkostsalade aardappel yoghurtsaus", "Maaltijden, salades"),  # a salad, not dairy
         ("XQZ 12", None),
     ],
 )
