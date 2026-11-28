@@ -131,6 +131,15 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
     <select id="retailer"><option value="">All</option></select></span>
     <span id="account-wrap" hidden><label for="account" class="meta">Account</label>
     <select id="account"><option value="">All accounts</option></select></span>
+    <span><label for="range" class="meta">Period</label>
+    <select id="range">
+      <option value="all">All time</option>
+      <option value="week">Last week</option>
+      <option value="month">Last month</option>
+      <option value="quarter">Last quarter</option>
+      <option value="year">Last year</option>
+      <option value="2y">Last 2 years</option>
+    </select></span>
     <button id="conn-toggle" title="Connected supermarkets">Connections</button>
     <button id="theme" title="Toggle light/dark">◐</button>
   </div>
@@ -146,7 +155,7 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
   <section class="tiles" id="tiles"></section>
 
   <section class="card wide">
-    <h2>Spend per month</h2>
+    <h2>Spend per <span class="unit">month</span></h2>
     <p class="sub">What the groceries cost: receipt totals after discounts, without savings stamps bought at the till.</p>
     <div class="chart" id="c-months"></div>
   </section>
@@ -159,31 +168,31 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
 
   <section class="card">
     <h2>Categories over time</h2>
-    <p class="sub">Top 7 categories per month, the rest folded into Overig.</p>
+    <p class="sub">Top 7 categories per <span class="unit">month</span>, the rest folded into Overig.</p>
     <div class="chart tall" id="c-catmonths"></div>
   </section>
 
   <section class="card">
-    <h2>Bonus &amp; discount savings per month</h2>
+    <h2>Bonus &amp; discount savings per <span class="unit">month</span></h2>
     <p class="sub" id="saved-sub"></p>
     <div class="chart" id="c-saved"></div>
   </section>
 
   <section class="card">
     <h2>Average basket</h2>
-    <p class="sub">Mean spend per shopping trip or order, per month.</p>
+    <p class="sub">Mean spend per shopping trip or order, per <span class="unit">month</span>.</p>
     <div class="chart" id="c-basket"></div>
   </section>
 
   <section class="card">
-    <h2>Shopping trips per month</h2>
+    <h2>Shopping trips per <span class="unit">month</span></h2>
     <p class="sub">In-store receipts and online orders.</p>
     <div class="chart" id="c-trips"></div>
   </section>
 
   <section class="card">
     <h2>Personal price index</h2>
-    <p class="sub">Average price of what you bought that month vs. the first price you paid for each product (= 100).</p>
+    <p class="sub">Average price of what you bought that <span class="unit">month</span> vs. the first price you paid for each product (= 100).</p>
     <div class="chart" id="c-index"></div>
   </section>
 
@@ -204,7 +213,7 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
 
   <section class="card wide">
     <h2>Biggest price changes</h2>
-    <p class="sub">Median shelf price of the first vs. the last quarter of your purchases of each product (at least 4 purchases over 120+ days). Bonus discounts excluded.</p>
+    <p class="sub">Median shelf price of the first vs. the last quarter of your purchases of each product (at least 4 purchases over <span id="min-days">120</span>+ days). Bonus discounts excluded.</p>
     <div class="scroll"><table id="t-changes"></table></div>
   </section>
 
@@ -261,11 +270,31 @@ const charts = {};
 let retailer = "";
 let account = "";
 let accountList = [];
+// time range: a rolling window ending today; ?range= in the URL wins over the remembered choice
+const RANGES = ["all", "week", "month", "quarter", "year", "2y"];
+let range = (() => {
+  const fromUrl = new URLSearchParams(location.search).get("range");
+  if (RANGES.includes(fromUrl)) return fromUrl;
+  try { const r = localStorage.getItem("range"); if (RANGES.includes(r)) return r; } catch (_) {}
+  return "all";
+})();
+// the last week and month are charted per day (the API groups them so), longer periods per month
+const perDay = () => range === "week" || range === "month";
+const unit = () => perDay() ? "day" : "month";
+const periodLabel = (v) => String(v).length === 10
+  ? new Date(v + "T00:00").toLocaleDateString("en-GB", {weekday: range === "week" ? "short" : undefined, day: "numeric", month: "short"}) : v;
+function rememberRange() {
+  try { localStorage.setItem("range", range); } catch (_) {}
+  const q = new URLSearchParams(location.search);
+  if (range === "all") q.delete("range"); else q.set("range", range);
+  history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
+}
 let productOrder = "spend";
 let selected = null;
 
 async function api(path, params = {}) {
-  const q = new URLSearchParams({...(retailer ? {retailer} : {}), ...(account ? {account} : {}), ...params});
+  const q = new URLSearchParams({...(retailer ? {retailer} : {}), ...(account ? {account} : {}),
+    ...(range !== "all" ? {range} : {}), ...params});
   const r = await fetch(path + (q.toString() ? "?" + q : ""));
   if (!r.ok) throw new Error(path + ": HTTP " + r.status);
   return r.json();
@@ -289,7 +318,7 @@ function base() {
     legend: {top: 0, left: 0, icon: "roundRect", itemWidth: 12, itemHeight: 12, textStyle: {color: text2}},
     tooltip: {trigger: "axis", backgroundColor: css("--surface"), borderColor: css("--border"),
       textStyle: {color: css("--text")}, valueFormatter: (v) => eur(v), axisPointer: {type: "line", lineStyle: {color: css("--muted")}}},
-    xAxis: {type: "category", axisLine: {lineStyle: {color: grid}}, axisTick: {show: false}, axisLabel: {color: text2}},
+    xAxis: {type: "category", axisLine: {lineStyle: {color: grid}}, axisTick: {show: false}, axisLabel: {color: text2, formatter: periodLabel}},
     yAxis: {type: "value", splitLine: {lineStyle: {color: grid}}, axisLabel: {color: text2, formatter: (v) => eur0(v)}},
   };
 }
@@ -305,7 +334,7 @@ function tiles(o) {
   const t = [
     ["Total spend", eur0(o.spend), `${monthYear(o.first)} – ${monthYear(o.last)}`,
       `What the groceries cost from ${o.first} to ${o.last}. Older purchases: see the note at the bottom.`],
-    ["Average month", eur0(o.avg_full_month), `${o.months} months`,
+    ["Average month", eur0(o.avg_full_month), `${o.months} month${o.months === 1 ? "" : "s"}`,
       `Average over ${o.months} full months; the first and the current month are partial and left out.`],
     ["Average basket", eur(o.avg_basket), `${o.purchases} purchases`, `Spend per receipt or order, over ${o.purchases} purchases.`],
     ["Bonus savings", eur0(o.saved), pct ? `${pct} off${stamps}` : "",
@@ -340,7 +369,7 @@ function monthsCharts(m) {
   m = m.filter((r) => r.baskets > 0);  // the charts below need receipts
   const rmonths = m.map((r) => r.month);
   const totalSaved = m.reduce((a, r) => a + r.saved, 0);
-  $("#saved-sub").textContent = `${eur(totalSaved)} saved in total, ${eur(totalSaved / Math.max(1, m.length))} per month on average.`;
+  $("#saved-sub").textContent = `${eur(totalSaved)} saved in total, ${eur(totalSaved / Math.max(1, m.length))} per ${perDay() ? "shopping day" : "month"} on average.`;
   chart("c-saved").setOption({...base(), legend: {show: false}, color: [css("--s3")],
     xAxis: {...b.xAxis, data: rmonths},
     series: [{name: "Saved", type: "bar", data: m.map((r) => r.saved), barMaxWidth: 24, itemStyle: barStyle}]}, true);
@@ -399,7 +428,10 @@ function productsTable(rows) {
 }
 
 function changesTable(rows) {
-  if (!rows.length) { $("#t-changes").innerHTML = `<tr><td class="empty">Not enough history yet.</td></tr>`; return; }
+  if (!rows.length) {
+    $("#t-changes").innerHTML = `<tr><td class="empty">${range === "all" ? "Not enough history yet." : "Not enough history in this period."}</td></tr>`;
+    return;
+  }
   $("#t-changes").innerHTML = `<thead><tr><th>Product</th><th class="n">Then</th><th class="n">Now</th><th class="n">Change</th><th>Period</th><th class="n">Purchases</th></tr></thead><tbody>` +
     rows.map((r) => `<tr class="click" data-k="${esc(rowKey(r))}"><td>${esc(r.name)}</td>
       <td class="n">${eur(r.old_price)}${r.per !== "st" ? "/" + esc(r.per) : ""}</td><td class="n">${eur(r.new_price)}</td>
@@ -451,9 +483,12 @@ async function showPrice(k) {
   const reg = d.regular || [];
   const DAY = 864e5, today = Date.now();
   const firstPaid = pts.length ? new Date(pts[0].date).getTime() : today - 365 * DAY;
-  const xMin = priceAll && reg.length ? Math.min(new Date(reg[0].date).getTime(), firstPaid) - 15 * DAY : firstPaid - 182 * DAY;
-  const xMax = today + 15 * DAY;
-  const regShown = reg.filter((x) => new Date(x.date).getTime() >= xMin);
+  // a selected period fixes the x axis; otherwise start half a year before the first purchase
+  const xMin = d.since ? new Date(d.since + "T00:00").getTime() - DAY
+    : priceAll && reg.length ? Math.min(new Date(reg[0].date).getTime(), firstPaid) - 15 * DAY : firstPaid - 182 * DAY;
+  const xMax = today + (d.since ? 1 : 15) * DAY;
+  let regShown = reg.filter((x) => new Date(x.date).getTime() >= xMin);
+  if (d.since && regShown.length < 2) regShown = [];  // a monthly line needs two months to say anything
   const visible = [...dots.map((x) => x.price), ...regShown.map((x) => x.price)];
   const lo = visible.length ? Math.min(...visible) : 0, hi = visible.length ? Math.max(...visible) : 1;
   const pad = Math.max((hi - lo) * 0.15, hi * 0.08);
@@ -466,7 +501,7 @@ async function showPrice(k) {
   if (d.skipped) notes.push(`${d.skipped} purchase${d.skipped === 1 ? "" : "s"} without a known weight not shown`);
   const publicMonths = reg.some((x) => x.source === "public");
   $("#ph-sub").innerHTML = `${esc(p.title || p.name || key)}${p.unit_size ? " (" + esc(p.unit_size) + ")" : ""} · price ${d.unit === "kg" ? "per kg" : "per pack"} · ${pts.length} purchase${pts.length === 1 ? "" : "s"}
-    ${publicMonths ? ` <button class="mini" id="ph-all">${priceAll ? "Since your first purchase" : "All history"}</button>` : ""}${notes.length ? "<br>" + notes.map(esc).join("<br>") : ""}`;
+    ${publicMonths && !d.since ? ` <button class="mini" id="ph-all">${priceAll ? "Since your first purchase" : "All history"}</button>` : ""}${notes.length ? "<br>" + notes.map(esc).join("<br>") : ""}`;
   const allBtn = document.getElementById("ph-all");
   if (allBtn) allBtn.onclick = () => { priceAll = !priceAll; showPrice(k); };
   const b = base();
@@ -501,12 +536,15 @@ async function loadProducts() {
 }
 
 async function load() {
+  document.querySelectorAll(".unit").forEach((e) => { e.textContent = unit(); });
   try {
     const [o, m, c, cm, idx, ch, st, pu, mk] = await Promise.all([
       api("/api/overview"), api("/api/months"), api("/api/categories"), api("/api/category-months"),
       api("/api/price-index"), api("/api/price-changes", {limit: 40}), api("/api/stores"), api("/api/purchases", {limit: 60}),
       api("/api/market-changes", {limit: 50}),
     ]);
+    // the API asks for half the period (at most 120 days) between a product's first and last purchase
+    $("#min-days").textContent = o.since ? Math.min(120, Math.floor((Date.now() - new Date(o.since + "T00:00")) / 864e5 / 2)) : 120;
     tiles(o); monthsCharts(m); categoriesChart(c); catMonthsChart(cm); indexChart(idx);
     changesTable(ch); storesTable(st); purchasesTable(pu); marketTable(mk);
     await loadProducts();
@@ -730,6 +768,8 @@ document.addEventListener("click", (e) => {
 });
 $("#retailer").addEventListener("change", (e) => { retailer = e.target.value; selected = null; load(); });
 $("#account").addEventListener("change", (e) => { account = e.target.value; selected = null; load(); });
+$("#range").value = range;
+$("#range").addEventListener("change", (e) => { range = e.target.value; rememberRange(); selected = null; load(); });
 async function loadAccounts() {
   try {
     accountList = await (await fetch("/api/accounts")).json();
@@ -756,7 +796,7 @@ loadAccounts().then(load);
 loadConnections();
 if (new URLSearchParams(location.search).has("connected")) {
   $("#connections").hidden = false;
-  history.replaceState(null, "", "/");
+  history.replaceState(null, "", range !== "all" ? "/?range=" + range : "/");
 }
 </script>
 </body>

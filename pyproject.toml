@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dutchgroceries"
-version = "1.2.0"
+version = "1.3.0"
 description = "Self-hosted supermarket purchase history for Albert Heijn and Jumbo: sync your receipts, see what you spend and how prices change."
 readme = "README.md"
 license = "MIT"

@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .accounts import migrate_legacy
-from .analytics import Analytics
+from .analytics import RANGES, Analytics, range_start
 from .config import Config
 from .db import connect
 from .web_connect import register as register_connections
@@ -128,10 +128,21 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
+    def period(
+        preset: str | None = Query(None, alias="range", pattern="^(all|" + "|".join(RANGES) + ")$"),
+    ) -> tuple[str | None, str]:
+        """`?range=week|month|quarter|year|2y|all`: a rolling window ending today. The last week and
+        month are charted per day, longer periods per month."""
+        start = range_start(preset)
+        return (start.isoformat() if start else None), ("day" if preset in ("week", "month") else "month")
+
     def analytics(
-        retailer: str | None = Query(None), account: int | None = Query(None), conn: sqlite3.Connection = Depends(db)
+        retailer: str | None = Query(None),
+        account: int | None = Query(None),
+        p: tuple[str | None, str] = Depends(period),
+        conn: sqlite3.Connection = Depends(db),
     ) -> Analytics:
-        return Analytics(conn, retailer or None, account)
+        return Analytics(conn, retailer or None, account, since=p[0], bucket=p[1])
 
     register_connections(app, config, db)
 
@@ -174,15 +185,19 @@ def create_app(config: Config) -> FastAPI:
         a: Analytics = Depends(analytics),
         limit: int = Query(25, ge=1, le=500),
         min_points: int = Query(4, ge=2),
-        min_days: int = Query(120, ge=0),
+        min_days: int | None = Query(None, ge=0),
     ) -> list[dict[str, Any]]:
         return a.price_changes(min_points, min_days, limit)
 
     @app.get("/api/price-history")
     def price_history(
-        retailer: str, key: str, account: int | None = Query(None), conn: sqlite3.Connection = Depends(db)
+        retailer: str,
+        key: str,
+        account: int | None = Query(None),
+        p: tuple[str | None, str] = Depends(period),
+        conn: sqlite3.Connection = Depends(db),
     ) -> dict[str, Any]:
-        return Analytics(conn, account=account).price_history(retailer, key)
+        return Analytics(conn, account=account, since=p[0]).price_history(retailer, key)
 
     @app.get("/api/market-changes")
     def market_changes(

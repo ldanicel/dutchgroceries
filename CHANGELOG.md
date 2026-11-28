@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.0 – 2026-11-28
+
+- **Time range**: a *Period* selector in the header with All time, Last week, Last month, Last quarter,
+  Last year and Last 2 years. Each is a rolling window ending today. Every tile, chart and table follows
+  it, including the price history and the price changes. The choice is kept in the URL (`?range=quarter`)
+  and remembered in the browser.
+- The last week and the last month are charted per day (days without purchases show as zero); longer
+  periods per month.
+- Biggest price changes need half the selected period (at most 120 days) between a product's first and
+  last purchase, so shorter periods still show changes.
+- API: every dashboard endpoint takes `range=all|week|month|quarter|year|2y`.
+- `groceries stats --range quarter` prints the summary for a period.
+
 ## v1.2.0 – 2026-11-21
 
 - **Fix: Jumbo products got the wrong name.** The product lookup took the first search result for every

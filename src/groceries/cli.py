@@ -70,7 +70,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--months", type=int, default=24)
 
     sub.add_parser("serve", help="run the web dashboard")
-    sub.add_parser("stats", help="print a summary as JSON")
+    st = sub.add_parser("stats", help="print a summary as JSON")
+    st.add_argument(
+        "--range",
+        choices=["all", "week", "month", "quarter", "year", "2y"],
+        default="all",
+        help="only the last week, month, quarter, year or 2 years (rolling, ending today)",
+    )
 
     args = ap.parse_args(argv)
     logging.basicConfig(
@@ -196,10 +202,11 @@ def main(argv: list[str] | None = None) -> int:
             proxy_headers=False,  # the app applies X-Forwarded-* itself, for GROCERIES_TRUSTED_PROXIES only
         )
     elif args.cmd == "stats":
-        from .analytics import Analytics
+        from .analytics import Analytics, range_start
         from .db import connect
 
-        print(json.dumps(Analytics(connect(config.db_path)).tldr(), indent=2, ensure_ascii=False))
+        a = Analytics(connect(config.db_path), since=range_start(args.range))
+        print(json.dumps(a.tldr(), indent=2, ensure_ascii=False))
     return 0
 
 

@@ -12,23 +12,68 @@ import re
 import sqlite3
 import statistics
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 UNKNOWN = "Onbekend"
 NON_PRODUCT_KEYS = ("stamps",)
+
+# time-range presets: rolling windows that end today (name -> label, calendar months back or days back)
+RANGES: dict[str, tuple[str, int, int]] = {
+    "week": ("Last week", 0, 7),
+    "month": ("Last month", 1, 0),
+    "quarter": ("Last quarter", 3, 0),
+    "year": ("Last year", 12, 0),
+    "2y": ("Last 2 years", 24, 0),
+}
+
+
+def range_start(name: str | None, today: date | None = None) -> date | None:
+    """First day of a rolling time-range preset ending `today` (inclusive), None for all time.
+
+    "month" is the day after the same day one calendar month back (clamped to that month's last
+    day): on 28 November it starts 29 October, on 31 March on 1 March. "week" is the last 7 days
+    including today.
+    """
+    if not name or name == "all":
+        return None
+    if name not in RANGES:
+        raise ValueError(f"unknown range {name!r}; one of: all, {', '.join(RANGES)}")
+    today = today or date.today()
+    _label, months, days = RANGES[name]
+    if days:
+        return today - timedelta(days=days - 1)
+    y, m = divmod(today.year * 12 + today.month - 1 - months, 12)
+    m += 1
+    last = (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).day
+    return date(y, m, min(today.day, last)) + timedelta(days=1)
+
 
 _SPEND = """(p.total - COALESCE((SELECT SUM(amount) FROM purchase_lines s
               WHERE s.purchase_id = p.id AND s.product_key IN ('stamps')), 0))"""
 
 
 class Analytics:
-    def __init__(self, conn: sqlite3.Connection, retailer: str | None = None, account: int | None = None) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        retailer: str | None = None,
+        account: int | None = None,
+        since: date | str | None = None,
+        bucket: str = "month",
+    ) -> None:
         """`account`: only purchases synced from that store account (bank imports have no account, so
-        they are left out then)."""
+        they are left out then). `since`: only purchases on or after that date (see `range_start`).
+        `bucket`: "month" or "day", the period the time series (months, categories over time, price
+        index) are grouped by; their rows keep the key `month` either way."""
         self.conn = conn
         self.retailer = retailer
         self.account = account
+        self.since = since.isoformat() if isinstance(since, date) else since
+        if bucket not in ("month", "day"):
+            raise ValueError(f"unknown bucket {bucket!r}")
+        self.bucket = bucket
+        self._n = 10 if bucket == "day" else 7  # length of the date prefix that names a period
 
     def _filter(self, alias: str = "p") -> tuple[str, list[Any]]:
         sql, args = "", []
@@ -43,6 +88,14 @@ class Analytics:
                 sql += f" AND {alias}.purchase_id IN (SELECT id FROM purchases WHERE account_id = ?)"
             if alias != "b":
                 args.append(self.account)
+        if self.since:
+            if alias == "p":
+                sql += " AND p.local_date >= ?"
+            elif alias == "b":
+                sql += " AND b.date >= ?"
+            else:
+                sql += f" AND {alias}.purchase_id IN (SELECT id FROM purchases WHERE local_date >= ?)"
+            args.append(self.since)
         return sql, args
 
     def _rows(self, sql: str, params: list[Any] | tuple[Any, ...] = ()) -> list[dict[str, Any]]:
@@ -58,7 +111,7 @@ class Analytics:
                 FROM purchases p WHERE 1=1 {f}""",
             a,
         )[0]
-        months = self._receipt_months()  # averages only over months with receipts, not bank-only months
+        months = self._receipt_months(7)  # averages only over months with receipts, not bank-only months
         row["months"] = len(months)
         row["avg_month"] = round(sum(m["spend"] for m in months) / len(months), 2) if months else 0
         full = [m for m in months if row["first"] and m["month"] > row["first"][:7] and m["month"] < row["last"][:7]]
@@ -76,6 +129,7 @@ class Analytics:
             f"WHERE l.product_key IS NOT NULL AND l.product_key != 'stamps' {f}",
             a,
         )
+        row["since"] = self.since
         row["last_sync"] = self._rows(
             "SELECT retailer, started_at, finished_at, status, message FROM sync_runs ORDER BY id DESC LIMIT 1"
         )
@@ -104,13 +158,24 @@ class Analytics:
                 },
             )
             m["bank"] = b["bank"]
+        for k in self._empty_days(rows):
+            rows[k] = {"month": k, "spend": 0.0, "store": 0.0, "online": 0.0, "saved": 0.0, "baskets": 0,
+                       "avg_basket": None, "avg_items": None, "bank": 0.0}  # fmt: skip
         return [rows[k] for k in sorted(rows)]
+
+    def _empty_days(self, have: Any) -> list[str]:
+        """With day buckets, the days of the period without purchases, so charts show them as zero."""
+        if self.bucket != "day" or not self.since:
+            return []
+        start, today = date.fromisoformat(self.since), date.today()
+        days = (start + timedelta(days=i) for i in range((today - start).days + 1))
+        return [d.isoformat() for d in days if d.isoformat() not in have]
 
     def bank_months(self) -> list[dict[str, Any]]:
         """Bank payments per month, only for dates before that retailer's first receipt or order."""
         f, a = self._filter("b")
         return self._rows(
-            f"""SELECT substr(b.date, 1, 7) AS month, ROUND(SUM(b.amount), 2) AS bank, COUNT(*) AS payments
+            f"""SELECT substr(b.date, 1, {self._n}) AS month, ROUND(SUM(b.amount), 2) AS bank, COUNT(*) AS payments
                 FROM bank_payments b
                 WHERE b.date < COALESCE((SELECT MIN(local_date) FROM purchases p WHERE p.retailer = b.retailer),
                                         '9999') {f}
@@ -118,10 +183,10 @@ class Analytics:
             a,
         )
 
-    def _receipt_months(self) -> list[dict[str, Any]]:
+    def _receipt_months(self, n: int | None = None) -> list[dict[str, Any]]:
         f, a = self._filter()
         return self._rows(
-            f"""SELECT substr(local_date, 1, 7) AS month,
+            f"""SELECT substr(local_date, 1, {n or self._n}) AS month,
                        ROUND(SUM({_SPEND}), 2) AS spend,
                        ROUND(SUM(CASE WHEN channel = 'store' THEN {_SPEND} ELSE 0 END), 2) AS store,
                        ROUND(SUM(CASE WHEN channel = 'online' THEN {_SPEND} ELSE 0 END), 2) AS online,
@@ -149,7 +214,7 @@ class Analytics:
         cats = [c["category"] for c in self.categories()[:top]]
         f, a = self._filter()
         rows = self._rows(
-            f"""SELECT substr(p.local_date, 1, 7) AS month, COALESCE(pr.category, '{UNKNOWN}') AS category,
+            f"""SELECT substr(p.local_date, 1, {self._n}) AS month, COALESCE(pr.category, '{UNKNOWN}') AS category,
                        ROUND(SUM(l.amount), 2) AS spend
                 FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
                 LEFT JOIN products pr ON pr.retailer = l.retailer AND pr.product_key = l.product_key
@@ -157,7 +222,8 @@ class Analytics:
                 GROUP BY 1, 2""",
             a,
         )
-        months = sorted({r["month"] for r in rows})
+        have = {r["month"] for r in rows}
+        months = sorted(have | set(self._empty_days(have)))
         series: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         for r in rows:
             series[r["category"] if r["category"] in cats else "Overig"][r["month"]] += r["spend"]
@@ -201,8 +267,14 @@ class Analytics:
                       l.qty_inferred, p.channel, p.retailer, p.store_street, p.store_city
                FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
                WHERE l.retailer = ? AND l.product_key = ? AND l.unit_price > 0
-               {"AND p.account_id = ?" if self.account is not None else ""} ORDER BY p.ts_utc""",
-            (retailer, product_key, *([self.account] if self.account is not None else [])),
+               {"AND p.account_id = ?" if self.account is not None else ""}
+               {"AND p.local_date >= ?" if self.since else ""} ORDER BY p.ts_utc""",
+            (
+                retailer,
+                product_key,
+                *([self.account] if self.account is not None else []),
+                *([self.since] if self.since else []),
+            ),
         )
         size = (product.get("unit_size") or "").strip().lower()
         pack_kg = _pack_kg(size)
@@ -227,8 +299,8 @@ class Analytics:
             points.append(pt)
         raw = self.conn.execute(
             "SELECT substr(date, 1, 7) AS month, price FROM market_prices WHERE retailer = ? AND product_key = ? "
-            "ORDER BY date",
-            (retailer, product_key),
+            "AND date >= ? ORDER BY date",
+            (retailer, product_key, (self.since or "")[:7]),
         ).fetchall()
         paid: dict[str, list[float]] = defaultdict(list)
         for pt in points:
@@ -259,6 +331,7 @@ class Analytics:
             "market_note": note,
             "variable_price": variable,
             "skipped": len(rows) - len(points),
+            "since": self.since,
         }
 
     def market_changes(self, limit: int = 25, by: str = "spend") -> list[dict[str, Any]]:
@@ -283,14 +356,16 @@ class Analytics:
         for t in top:
             rows = self.conn.execute(
                 "SELECT substr(date, 1, 7) AS month, price FROM market_prices WHERE retailer = ? AND product_key = ?"
-                " ORDER BY date",
-                (t["retailer"], t["product_key"]),
+                " AND date >= ? ORDER BY date",
+                (t["retailer"], t["product_key"], (self.since or "")[:7]),
             ).fetchall()
             series, _note = clean_shelf_prices(rows, {})
             valid = [x for x in series if x["price"] is not None]
             if not valid:
                 continue
             first, last = valid[0]["date"][:7], valid[-1]["date"][:7]
+            if self.since and first == last:
+                continue  # one month of public data in this period: nothing to compare
             old, new = valid[0]["price"], valid[-1]["price"]
             out.append(
                 {
@@ -305,8 +380,14 @@ class Analytics:
             )
         return out
 
-    def price_changes(self, min_points: int = 4, min_days: int = 120, limit: int = 25) -> list[dict[str, Any]]:
-        """Compare the median shelf price of a product's first and last ~quarter of observations."""
+    def price_changes(self, min_points: int = 4, min_days: int | None = None, limit: int = 25) -> list[dict[str, Any]]:
+        """Compare the median shelf price of a product's first and last ~quarter of observations.
+
+        `min_days` defaults to 120, or half the selected period when that is shorter."""
+        if min_days is None:
+            min_days = 120
+            if self.since:
+                min_days = min(120, (date.today() - date.fromisoformat(self.since)).days // 2)
         f, a = self._filter()
         rows = self.conn.execute(
             f"""SELECT l.retailer, l.product_key, COALESCE(pr.title, l.name) AS name, l.weight_unit,
@@ -351,10 +432,11 @@ class Analytics:
         return out[:limit]
 
     def inflation(self) -> list[dict[str, Any]]:
-        """Monthly basket index: mean price ratio vs each product's first observed price."""
+        """Basket index per month (or day): mean price ratio vs each product's first observed price."""
         f, a = self._filter()
         rows = self.conn.execute(
-            f"""SELECT l.retailer || ':' || l.product_key AS k, substr(p.local_date, 1, 7) AS month, l.unit_price
+            f"""SELECT l.retailer || ':' || l.product_key AS k, substr(p.local_date, 1, {self._n}) AS month,
+                       l.unit_price
                 FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
                 WHERE l.product_key IS NOT NULL AND l.product_key NOT IN ('stamps') AND l.unit_price > 0 {f}
                 ORDER BY p.ts_utc""",
