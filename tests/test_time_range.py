@@ -87,12 +87,16 @@ def test_every_query_follows_the_range() -> None:
     assert len(Analytics(conn).bank_months()) == 1
 
 
-def test_price_changes_scale_to_the_period() -> None:
-    conn = _db([1, 10, 20, 28])
-    a = Analytics(conn, since=range_start("month"))
-    # 27 days of history: too short for the 120-day default, enough for half of a month
-    assert Analytics(conn).price_changes() == []
-    assert a.price_changes()[0]["points"] == 4
+def test_price_changes_compare_the_period_with_all_history() -> None:
+    conn = _db([10, 12, 200, 210, 220, 300])
+    conn.execute("UPDATE purchase_lines SET unit_price = 12 WHERE purchase_id IN ('ah:store:0', 'ah:store:1')")
+    [all_time] = Analytics(conn).price_changes()
+    [month] = Analytics(conn, since=range_start("month")).price_changes()
+    # the product set comes from the period, the "then" price from all history
+    assert month["old_price"] == all_time["old_price"] == 10
+    assert month["new_price"] == 12 and month["points"] == 6
+    # not bought in the last week: not listed for it
+    assert Analytics(conn, since=range_start("week")).price_changes() == []
 
 
 @pytest.fixture

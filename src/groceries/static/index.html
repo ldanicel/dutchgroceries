@@ -104,6 +104,20 @@ button.danger { color: var(--up); }
 button:disabled { opacity: .5; }
 dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text);
   max-width: 560px; width: calc(100% - 32px); padding: 20px; }
+dialog.wide { max-width: 860px; max-height: calc(100vh - 48px); display: flex; flex-direction: column; padding: 0; }
+dialog.wide[open] { display: flex; }
+dialog.wide header { display: flex; flex-wrap: nowrap; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 18px 20px 8px; max-width: none; margin: 0; width: 100%; }
+dialog.wide .body { overflow: auto; padding: 0 20px 16px; }
+dialog.wide .sum { color: var(--text-2); font-size: 13px; margin: 0; }
+.dtabs { display: flex; gap: 4px; margin: 0 0 8px; padding: 0 20px; }
+.dtabs button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+tbody tr.rclick, tbody tr.mclick { cursor: pointer; }
+tbody tr.visit td { padding-top: 14px; font-weight: 600; border-bottom: 1px solid var(--border); }
+tbody tr.vline td:first-child { padding-left: 16px; }
+#dr-chart { height: 220px; margin-bottom: 8px; }
+tbody tr.rclick:hover, tbody tr.mclick:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.chart.drillable { cursor: pointer; }
+.drill-hint { font-size: 12px; color: var(--muted); }
 dialog::backdrop { background: rgb(0 0 0 / .45); }
 dialog h2 { margin: 0 0 8px; font-size: 18px; }
 dialog ol { padding-left: 20px; } dialog li { margin: 8px 0; }
@@ -157,44 +171,44 @@ footer a { color: inherit; }
 
   <section class="card wide">
     <h2>Spend per <span class="unit">month</span></h2>
-    <p class="sub">What the groceries cost: receipt totals after discounts, without savings stamps bought at the till.</p>
-    <div class="chart" id="c-months"></div>
+    <p class="sub">What the groceries cost: receipt totals after discounts, without savings stamps bought at the till. <span class="drill-hint">Click a bar to see what was bought.</span></p>
+    <div class="chart drillable" id="c-months"></div>
   </section>
 
   <section class="card">
     <h2>Spend per category</h2>
     <p class="sub">Line amounts before receipt-level Bonus discounts. Products the catalogue no longer lists get a category inferred from a search match.</p>
-    <div class="chart tall" id="c-categories"></div>
+    <div class="chart drillable tall" id="c-categories"></div>
   </section>
 
   <section class="card">
     <h2>Categories over time</h2>
     <p class="sub">Top 7 categories per <span class="unit">month</span>, the rest folded into Overig.</p>
-    <div class="chart tall" id="c-catmonths"></div>
+    <div class="chart drillable tall" id="c-catmonths"></div>
   </section>
 
   <section class="card">
     <h2>Bonus &amp; discount savings per <span class="unit">month</span></h2>
     <p class="sub" id="saved-sub"></p>
-    <div class="chart" id="c-saved"></div>
+    <div class="chart drillable" id="c-saved"></div>
   </section>
 
   <section class="card">
     <h2>Average basket</h2>
     <p class="sub">Mean spend per shopping trip or order, per <span class="unit">month</span>.</p>
-    <div class="chart" id="c-basket"></div>
+    <div class="chart drillable" id="c-basket"></div>
   </section>
 
   <section class="card">
     <h2>Shopping trips per <span class="unit">month</span></h2>
     <p class="sub">In-store receipts and online orders.</p>
-    <div class="chart" id="c-trips"></div>
+    <div class="chart drillable" id="c-trips"></div>
   </section>
 
   <section class="card">
     <h2>Personal price index</h2>
     <p class="sub">Average price of what you bought that <span class="unit">month</span> vs. the first price you paid for each product (= 100).</p>
-    <div class="chart" id="c-index"></div>
+    <div class="chart drillable" id="c-index"></div>
   </section>
 
   <section class="card">
@@ -214,7 +228,7 @@ footer a { color: inherit; }
 
   <section class="card wide">
     <h2>Biggest price changes</h2>
-    <p class="sub">Median shelf price of the first vs. the last quarter of your purchases of each product (at least 4 purchases over <span id="min-days">120</span>+ days). Bonus discounts excluded.</p>
+    <p class="sub">Median shelf price of the first vs. the last quarter of your purchases of each product (at least 4 purchases over 120+ days).<span id="changes-period"></span>. Bonus discounts excluded.</p>
     <div class="scroll"><table id="t-changes"></table></div>
   </section>
 
@@ -234,6 +248,18 @@ footer a { color: inherit; }
     <div class="scroll"><table id="t-purchases"></table></div>
   </section>
 </main>
+<dialog id="drill" class="wide" aria-labelledby="dr-title">
+  <header>
+    <div><h2 id="dr-title">Items</h2><p class="sum" id="dr-sum"></p></div>
+    <button id="dr-close" aria-label="Close">✕</button>
+  </header>
+  <div class="dtabs" id="dr-tabs">
+    <button data-tab="items" aria-pressed="true">Items</button>
+    <button data-tab="purchases" aria-pressed="false">Receipts</button>
+    <button data-tab="visits" aria-pressed="false" hidden>Visits with items</button>
+  </div>
+  <div class="body"><div class="chart" id="dr-chart" hidden></div><table id="dr-table"></table></div>
+</dialog>
 <dialog id="connect-dialog">
   <h2 id="cd-title">Connect</h2>
   <div id="cd-new" hidden>
@@ -294,8 +320,9 @@ let productOrder = "spend";
 let selected = null;
 
 async function api(path, params = {}) {
-  const q = new URLSearchParams({...(retailer ? {retailer} : {}), ...(account ? {account} : {}),
-    ...(range !== "all" ? {range} : {}), ...params});
+  const q = new URLSearchParams();
+  const all = {...(retailer ? {retailer} : {}), ...(account ? {account} : {}), ...(range !== "all" ? {range} : {}), ...params};
+  for (const [k, v] of Object.entries(all)) for (const x of [].concat(v)) if (x != null) q.append(k, x);  // arrays repeat the key
   const r = await fetch(path + (q.toString() ? "?" + q : ""));
   if (!r.ok) throw new Error(path + ": HTTP " + r.status);
   return r.json();
@@ -444,14 +471,14 @@ function marketTable(rows) {
   $("#market-card").hidden = !rows.length;
   if (!rows.length) return;
   $("#t-market").innerHTML = `<thead><tr><th>Product</th><th>From</th><th class="n">Price</th><th>To</th><th class="n">Price</th><th class="n">Change</th><th class="n">Your spend</th></tr></thead><tbody>` +
-    rows.map((r) => `<tr class="click" data-k="${esc(rowKey(r))}"><td>${esc(r.name)}</td><td>${esc(r.first_month)}</td><td class="n">${eur(r.old_price)}</td>
+    rows.map((r) => `<tr class="mclick" data-k="${esc(rowKey(r))}" data-name="${esc(r.name)}" title="Show every price change"><td>${esc(r.name)}</td><td>${esc(r.first_month)}</td><td class="n">${eur(r.old_price)}</td>
       <td>${esc(r.last_month)}</td><td class="n">${eur(r.new_price)}</td>
       <td class="n ${r.pct > 0 ? "up" : r.pct < 0 ? "down" : ""}">${r.pct > 0 ? "▲ +" : r.pct < 0 ? "▼ " : "= "}${r.pct}%</td><td class="n">${eur(r.spend)}</td></tr>`).join("") + "</tbody>";
 }
 
 function storesTable(rows) {
   $("#t-stores").innerHTML = `<thead><tr><th>Store</th><th class="n">Visits</th><th class="n">Spend</th><th>Last visit</th></tr></thead><tbody>` +
-    rows.map((r) => `<tr><td>${esc(r.street || "?")}<br><span class="meta">${esc([r.postcode, r.city].filter(Boolean).join(" "))}${r.store_id ? " · #" + esc(r.store_id) : ""}</span></td>
+    rows.map((r) => `<tr class="rclick" data-store="${esc(r.store_id ?? "")}" data-label="${esc(r.street || "?")}"><td>${esc(r.street || "?")}<br><span class="meta">${esc([r.postcode, r.city].filter(Boolean).join(" "))}${r.store_id ? " · #" + esc(r.store_id) : ""}</span></td>
       <td class="n">${r.visits}</td><td class="n">${eur(r.spend)}</td><td>${esc(r.last)}</td></tr>`).join("") + "</tbody>";
 }
 
@@ -536,6 +563,165 @@ async function loadProducts() {
   if (selected) document.querySelectorAll(`tr[data-k="${CSS.escape(selected)}"]`).forEach((e) => e.classList.add("sel"));
 }
 
+// ---- drill-down: click a bar (or a store) to see the items and receipts behind it -------------
+const drillState = {params: {}, data: null, tab: "items", title: ""};
+const periodName = (v) => String(v).length === 10
+  ? new Date(v + "T00:00").toLocaleDateString("en-GB", {weekday: "short", day: "numeric", month: "long", year: "numeric"})
+  : new Date(v + "-01T00:00").toLocaleDateString("en-GB", {month: "long", year: "numeric"});
+async function openDrill(title, params, tab = "items", note = "") {
+  Object.assign(drillState, {params, tab, title, note, data: null});
+  $("#dr-title").textContent = title;
+  $("#dr-sum").textContent = "Loading…";
+  $("#dr-table").innerHTML = "";
+  $("#dr-tabs").hidden = false;
+  $("#dr-chart").hidden = true;
+  if (!$("#drill").open) $("#drill").showModal();
+  try {
+    drillState.data = await api("/api/drill", params);
+  } catch (e) { $("#dr-sum").textContent = "Could not load: " + e.message; return; }
+  renderDrill();
+}
+function renderDrill() {
+  const d = drillState.data, filtered = drillState.params.category || drillState.params.other_than;
+  const hasVisits = !!(d.purchases[0] && d.purchases[0].lines);
+  $('#dr-tabs [data-tab="visits"]').hidden = !hasVisits;
+  if (drillState.tab === "visits" && !hasVisits) drillState.tab = "purchases";
+  document.querySelectorAll("#dr-tabs button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === drillState.tab));
+  $("#dr-sum").textContent = (drillState.note ? drillState.note + " " : "") + `${d.items.length} product${d.items.length === 1 ? "" : "s"} · ${d.purchases.length} receipt${d.purchases.length === 1 ? "" : "s"} · `
+    + (filtered ? `${eur(d.spend)} (line amounts before Bonus discounts)` : `${eur(d.receipt_spend)} paid · ${eur(d.spend)} in item prices before Bonus discounts`);
+  const where = (r) => `${badge(r.retailer)}${accountList.length > 1 && r.account ? `<span class="acct">${esc(r.account)}</span>` : ""} ${r.channel === "online" ? "Online order" : esc([r.store_street, r.store_city].filter(Boolean).join(", "))}`;
+  if (drillState.tab === "visits") {
+    $("#dr-table").innerHTML = `<thead><tr><th>Product</th><th>Category</th><th class="n">Qty</th><th class="n">Price</th><th class="n">Amount</th></tr></thead><tbody>` +
+      d.purchases.map((r) => `<tr class="visit"><td colspan="3">${esc(periodName(r.local_date))} · ${where(r)}</td>
+          <td class="n">${r.saved ? "saved " + eur(r.saved) : ""}</td><td class="n">${eur(r.spend)}</td></tr>` +
+        r.lines.map((l) => `<tr class="vline${l.product_key ? " click" : ""}"${l.product_key ? ` data-k="${esc(l.retailer + "|" + l.product_key)}"` : ""}>
+          <td>${esc(l.name)}${l.is_bonus ? ' <span class="pill">Bonus</span>' : ""}</td><td>${esc(l.category)}</td>
+          <td class="n">${l.weight ? l.weight + " " + esc(l.weight_unit || "kg") : l.quantity ?? ""}</td>
+          <td class="n">${l.unit_price ? eur(l.unit_price) : ""}</td><td class="n">${eur(l.amount)}</td></tr>`).join("") +
+        (r.discounts || []).map((x) => `<tr class="vline"><td colspan="4" class="meta">${esc(x.name || x.type || "Discount")}</td><td class="n down">−${eur(x.amount)}</td></tr>`).join("")).join("") + "</tbody>";
+    return;
+  }
+  if (drillState.tab === "items") {
+    $("#dr-table").innerHTML = d.items.length ? `<thead><tr><th>Product</th><th>Category</th><th>Where</th><th class="n">Qty</th><th class="n">Times</th><th class="n">Spend</th><th>Last</th></tr></thead><tbody>` +
+      d.items.map((r) => `<tr${r.product_key ? ` class="click" data-k="${esc(rowKey(r))}" title="Show price history"` : ""}>
+        <td>${badge(r.retailer)}${esc(r.name)}${r.unit_size ? `<span class="pill">${esc(r.unit_size)}</span>` : ""}</td>
+        <td>${esc(r.category)}</td><td>${esc((r.stores || "").split(",").join(", "))}</td>
+        <td class="n">${r.weight ? r.weight.toLocaleString("nl-NL") + " kg" : r.units ?? ""}</td><td class="n">${r.times}</td>
+        <td class="n">${eur(r.spend)}</td><td>${esc(r.last)}</td></tr>`).join("") + "</tbody>"
+      : `<tr><td class="empty">No items.</td></tr>`;
+  } else {
+    $("#dr-table").innerHTML = d.purchases.length ? `<thead><tr><th>Date</th><th>Where</th><th class="n">Items</th><th class="n">Saved</th><th class="n">${filtered ? "In this category" : "Spend"}</th></tr></thead><tbody>` +
+      d.purchases.map((r) => `<tr class="rclick" data-id="${esc(r.id)}" title="Show the receipt"><td>${esc(r.local_date)}</td>
+        <td>${badge(r.retailer)}${accountList.length > 1 && r.account ? `<span class="acct">${esc(r.account)}</span>` : ""} ${r.channel === "online" ? "Online order" : esc([r.store_street, r.store_city].filter(Boolean).join(", "))}</td>
+        <td class="n">${filtered ? r.lines + " of " + r.item_count : r.item_count}</td><td class="n">${r.saved ? eur(r.saved) : ""}</td><td class="n">${eur(r.spend)}</td></tr>`).join("") + "</tbody>"
+      : `<tr><td class="empty">No receipts.</td></tr>`;
+  }
+}
+async function showReceipt(id) {
+  $("#dr-tabs").hidden = true;
+  $("#dr-sum").textContent = "Loading…";
+  let p;
+  try { p = await api("/api/purchases/" + encodeURIComponent(id)); } catch (e) { $("#dr-sum").textContent = e.message; return; }
+  $("#dr-sum").innerHTML = `<button class="mini" id="dr-back">← Back</button> ${badge(p.retailer)}${esc(p.local_date)} · ${p.channel === "online" ? "Online order" : esc([p.store_street, p.store_city].filter(Boolean).join(", "))} · total ${eur(p.total)}${p.discount_total ? " · saved " + eur(p.discount_total) : ""}`;
+  $("#dr-back").onclick = () => { $("#dr-tabs").hidden = false; renderDrill(); };
+  $("#dr-table").innerHTML = `<thead><tr><th>Product</th><th>Category</th><th class="n">Qty</th><th class="n">Price</th><th class="n">Amount</th></tr></thead><tbody>` +
+    p.lines.map((l) => `<tr${l.product_key && l.product_key !== "stamps" ? ` class="click" data-k="${esc(l.retailer + "|" + l.product_key)}"` : ""}>
+      <td>${esc(l.title || l.name)}${l.is_bonus ? ' <span class="pill">Bonus</span>' : ""}</td><td>${esc(l.category || "")}</td>
+      <td class="n">${l.weight ? l.weight + " " + esc(l.weight_unit || "kg") : l.quantity ?? ""}</td>
+      <td class="n">${l.unit_price ? eur(l.unit_price) : ""}</td><td class="n">${eur(l.amount)}</td></tr>`).join("") +
+    (p.discounts || []).map((x) => `<tr><td colspan="4" class="meta">${esc(x.name || x.type || "Discount")}</td><td class="n down">−${eur(x.amount)}</td></tr>`).join("") + "</tbody>";
+}
+$("#dr-close").addEventListener("click", () => $("#drill").close());
+$("#drill").addEventListener("click", (e) => {
+  if (e.target === $("#drill")) { $("#drill").close(); return; }  // click on the backdrop
+  const t = e.target.closest("#dr-tabs button");
+  if (t) { drillState.tab = t.dataset.tab; renderDrill(); return; }
+  const r = e.target.closest("tr.rclick");
+  if (r) { showReceipt(r.dataset.id); return; }
+  if (e.target.closest("tr.click")) {  // the document handler shows the price history
+    $("#drill").close();
+    setTimeout(() => $("#c-price").scrollIntoView({behavior: "smooth", block: "center"}), 50);
+  }
+});
+// every price change of one product over all time: public monthly shelf prices plus your receipts
+async function openTimeline(k, name) {
+  const [r, key] = k.split("|");
+  Object.assign(drillState, {params: {}, tab: "items", title: name, note: "", data: null});
+  $("#dr-title").textContent = name;
+  $("#dr-sum").textContent = "Loading…";
+  $("#dr-table").innerHTML = "";
+  $("#dr-tabs").hidden = true;
+  $("#dr-chart").hidden = false;
+  if (!$("#drill").open) $("#drill").showModal();
+  let d;
+  try { d = await api("/api/price-history", {retailer: r, key, range: "all"}); } catch (e) { $("#dr-sum").textContent = e.message; return; }
+  const unitLabel = d.unit === "kg" ? "/kg" : "";
+  const events = [
+    ...(d.regular || []).filter((x) => x.source === "public").map((x) => ({date: x.date.slice(0, 7), t: x.date, price: x.price, where: "Public shelf price", pub: true})),
+    ...d.points.map((x) => ({date: x.date, t: x.date, price: x.price, bonus: x.is_bonus,
+      where: (BRAND[x.retailer] || [x.retailer])[0] + (x.channel === "online" ? " online" : x.store_street ? " " + x.store_street : "")})),
+  ].sort((a, b) => a.t.localeCompare(b.t));
+  // a row per change: the first price, then every time the price differs from the one before
+  const changes = [];
+  for (const e of events) {
+    const prev = changes[changes.length - 1];
+    if (!prev || Math.abs(e.price - prev.price) >= 0.005) changes.push({...e, prev: prev && prev.price});
+  }
+  const first = changes.length ? changes[0].price : null;
+  $("#dr-sum").textContent = `${changes.length} price${changes.length === 1 ? "" : "s"} over ${events.length} observations · price ${d.unit === "kg" ? "per kg" : "per pack"}`
+    + (first && changes.length > 1 ? ` · ${eur(first)} → ${eur(changes[changes.length - 1].price)} (${((changes[changes.length - 1].price / first - 1) * 100).toFixed(1)}%)` : "");
+  const pct = (a, b) => { if (!b) return ""; const v = (a / b - 1) * 100; return `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${v.toFixed(1)}%</span>`; };
+  $("#dr-table").innerHTML = changes.length ? `<thead><tr><th>Date</th><th class="n">Price</th><th class="n">Change</th><th class="n">Since first</th><th>Where</th></tr></thead><tbody>` +
+    changes.slice().reverse().map((c) => `<tr><td>${esc(c.date)}</td><td class="n">${eur(c.price)}${unitLabel}</td><td class="n">${c.prev ? pct(c.price, c.prev) : ""}</td>
+      <td class="n">${c.prev ? pct(c.price, first) : ""}</td><td>${esc(c.where)}${c.bonus ? ' <span class="pill">Bonus item</span>' : ""}</td></tr>`).join("") + "</tbody>"
+    : `<tr><td class="empty">No price data.</td></tr>`;
+  const b = base();
+  const c = chart("dr-chart");
+  c.setOption({...b, legend: {...b.legend, show: true}, grid: {...b.grid, top: 32},
+    tooltip: {...b.tooltip, trigger: "item", formatter: (q) => `${esc(String(q.value[0]).slice(0, 10))}<br><b>${eur(q.value[1])}</b>${unitLabel}`},
+    xAxis: {type: "time", axisLine: {lineStyle: {color: css("--grid")}}, axisLabel: {color: css("--text-2"), hideOverlap: true}},
+    yAxis: {...b.yAxis, scale: true, axisLabel: {color: css("--text-2"), formatter: (v) => eur(v)}},
+    series: [
+      {name: "Public shelf price", type: "line", step: "end", showSymbol: false, data: events.filter((e) => e.pub).map((e) => [e.t, e.price]),
+        lineStyle: {width: 2, color: css("--s2")}, itemStyle: {color: css("--s2")}},
+      {name: "You paid", type: "scatter", symbolSize: 7, data: events.filter((e) => !e.pub).map((e) => [e.t, e.price]), itemStyle: {color: css("--s1")}},
+    ]}, true);
+  setTimeout(() => c.resize(), 0);
+}
+
+let drillWired = false;
+function wireDrill() {
+  if (drillWired) return;
+  drillWired = true;
+  const on = (id, fn) => chart(id).on("click", fn);
+  on("c-months", (p) => {
+    if (p.seriesName.startsWith("Bank")) {
+      openDrill(`${periodName(p.name)} · bank statements`, {period: p.name}, "items",
+        "Bank statement payments have no item details; listed below is what receipts show for that month.");
+      return;
+    }
+    openDrill(`${periodName(p.name)} · ${p.seriesName.toLowerCase()}`, {period: p.name, channel: p.seriesName === "Online" ? "online" : "store"});
+  });
+  on("c-categories", (p) => openDrill(p.name, {category: p.name}));
+  on("c-catmonths", (p) => {
+    const named = chart("c-catmonths").getOption().series.map((x) => x.name).filter((n) => n !== "Overig");
+    openDrill(`${p.seriesName} · ${periodName(p.name)}`, p.seriesName === "Overig"
+      ? {period: p.name, other_than: named} : {period: p.name, category: p.seriesName});
+  });
+  on("c-saved", (p) => openDrill(`Savings · ${periodName(p.name)}`, {period: p.name}, "purchases"));
+  on("c-trips", (p) => openDrill(`Shopping trips · ${periodName(p.name)}`, {period: p.name, lines: 1}, "visits"));
+  on("c-basket", (p) => openDrill(`Baskets · ${periodName(p.name)}`, {period: p.name}, "purchases"));
+  on("c-index", (p) => openDrill(`Prices paid · ${periodName(p.name)}`, {period: p.name}));
+  $("#t-stores").addEventListener("click", (e) => {
+    const r = e.target.closest("tr.rclick");
+    if (r) openDrill(r.dataset.label, {store: r.dataset.store, lines: 1}, "visits");
+  });
+  $("#t-market").addEventListener("click", (e) => {
+    const r = e.target.closest("tr.mclick");
+    if (r) openTimeline(r.dataset.k, r.dataset.name);
+  });
+}
+
 async function load() {
   document.querySelectorAll(".unit").forEach((e) => { e.textContent = unit(); });
   try {
@@ -544,9 +730,8 @@ async function load() {
       api("/api/price-index"), api("/api/price-changes", {limit: 40}), api("/api/stores"), api("/api/purchases", {limit: 60}),
       api("/api/market-changes", {limit: 50}),
     ]);
-    // the API asks for half the period (at most 120 days) between a product's first and last purchase
-    $("#min-days").textContent = o.since ? Math.min(120, Math.floor((Date.now() - new Date(o.since + "T00:00")) / 864e5 / 2)) : 120;
-    tiles(o); monthsCharts(m); categoriesChart(c); catMonthsChart(cm); indexChart(idx);
+    $("#changes-period").textContent = o.since ? " Showing products bought in the selected period: what you paid then vs. their first prices over all your history." : "";
+    tiles(o); monthsCharts(m); wireDrill(); categoriesChart(c); catMonthsChart(cm); indexChart(idx);
     changesTable(ch); storesTable(st); purchasesTable(pu); marketTable(mk);
     await loadProducts();
     if (!selected) { const top = await api("/api/products", {order: "spend", limit: 1}); if (top.length) showPrice(rowKey(top[0])); }

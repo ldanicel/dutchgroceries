@@ -186,7 +186,7 @@ def create_app(config: Config) -> FastAPI:
         a: Analytics = Depends(analytics),
         limit: int = Query(25, ge=1, le=500),
         min_points: int = Query(4, ge=2),
-        min_days: int | None = Query(None, ge=0),
+        min_days: int = Query(120, ge=0),
     ) -> list[dict[str, Any]]:
         return a.price_changes(min_points, min_days, limit)
 
@@ -225,6 +225,19 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/purchases")
     def purchases(a: Analytics = Depends(analytics), limit: int = Query(50, ge=1, le=1000)) -> list[dict[str, Any]]:
         return a.purchases(limit)
+
+    @app.get("/api/drill")
+    def drill(
+        a: Analytics = Depends(analytics),
+        period: str | None = Query(None, pattern=r"^\d{4}-\d{2}(-\d{2})?$"),
+        category: str | None = Query(None, max_length=200),
+        other_than: list[str] | None = Query(None),
+        channel: str | None = Query(None, pattern="^(store|online)$"),
+        store: str | None = Query(None, max_length=100),
+        lines: bool = False,
+    ) -> dict[str, Any]:
+        """The items and purchases behind one bar of a chart; `lines`: with each receipt's lines."""
+        return a.drill(period, category, channel, other_than, store, with_lines=lines)
 
     @app.get("/api/purchases/{purchase_id}")
     def purchase(purchase_id: str, a: Analytics = Depends(analytics)) -> dict[str, Any]:
