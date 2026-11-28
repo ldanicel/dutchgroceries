@@ -114,6 +114,7 @@ textarea { width: 100%; min-height: 70px; font: 12px ui-monospace, monospace; co
 details summary { cursor: pointer; color: var(--text-2); }
 .msg { min-height: 1.4em; font-size: 13px; } .msg.err { color: var(--up); } .msg.ok { color: var(--down); }
 footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--muted); font-size: 12px; }
+footer a { color: inherit; }
 @media (max-width: 900px) {
   .card, .card.third { grid-column: span 12; }
   header, main, footer { padding-left: 16px; padding-right: 16px; }
@@ -256,7 +257,7 @@ footer { max-width: 1400px; margin: 0 auto; padding: 0 24px 32px; color: var(--m
   </details>
   <p style="text-align:right;margin:0"><button id="cd-close">Close</button></p>
 </dialog>
-<footer>Retailers only keep a limited history (Albert Heijn: 27 months of receipts), so nothing older than that can be fetched. This archive keeps every purchase from the first sync on, so your history keeps growing even as the retailer deletes old receipts.<br>Uses unofficial retailer APIs. Not affiliated with or endorsed by any retailer.</footer>
+<footer>Retailers only keep a limited history (Albert Heijn: 27 months of receipts), so nothing older than that can be fetched. This archive keeps every purchase from the first sync on, so your history keeps growing even as the retailer deletes old receipts.<br>Uses unofficial retailer APIs. Not affiliated with or endorsed by any retailer.<br><a href="https://github.com/ldanicel/dutchgroceries/releases" rel="noopener noreferrer">dutchgroceries {{VERSION}}</a></footer>
 
 <script>
 "use strict";

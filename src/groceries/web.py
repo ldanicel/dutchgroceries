@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from . import __version__
 from .accounts import migrate_legacy
 from .analytics import RANGES, Analytics, range_start
 from .config import Config
@@ -63,7 +64,7 @@ def create_app(config: Config) -> FastAPI:
     page = page.replace("{{ECHARTS_URL}}", html.escape(config.echarts_url))
     # pin the default CDN file by hash; a self-hosted copy (GROCERIES_ECHARTS_URL) is trusted as is
     sri = f' integrity="{ECHARTS_SRI}"' if config.echarts_url == Config.echarts_url else ""
-    page = page.replace("{{ECHARTS_SRI}}", sri)
+    page = page.replace("{{ECHARTS_SRI}}", sri).replace("{{VERSION}}", __version__)
 
     # DNS rebinding: a hostile site can point its own name at this server and then talk to it
     # "same-origin". Only answer to Host names we expect: localhost, IP literals, the bind host
@@ -152,7 +153,7 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": __version__}
 
     @app.get("/api/overview")
     def overview(a: Analytics = Depends(analytics)) -> dict[str, Any]:

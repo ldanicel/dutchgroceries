@@ -20,6 +20,7 @@ change over time.
 
 - [Features](#features)
 - [Quick start](#quick-start)
+- [Upgrading](#upgrading)
 - [Connecting Albert Heijn and Jumbo](#connecting-albert-heijn-and-jumbo)
 - [Configuration](#configuration)
 - [Running behind a reverse proxy](#running-behind-a-reverse-proxy)
@@ -114,6 +115,57 @@ GROCERIES_DATA_DIR=./demo .venv/bin/groceries serve
 `demo-seed` fills an empty data directory with made-up purchases from two made-up Albert Heijn
 accounts (*Main* and *Sam*) and one Jumbo account, so you can look around without an account.
 
+## Upgrading
+
+Read [CHANGELOG.md](CHANGELOG.md) first. Your data and logins stay where they are.
+
+### Docker
+
+```sh
+cd dutchgroceries
+git pull
+docker compose up -d --build
+docker compose exec web groceries --version
+```
+
+`up -d --build` rebuilds the image and recreates the `web` and `sync` containers; the `groceries-data`
+volume is kept.
+
+### Python (venv) with systemd
+
+With the paths from the [quick start](#python-venv-with-systemd):
+
+```sh
+sudo git -C /opt/dutchgroceries/src pull
+sudo /opt/dutchgroceries/venv/bin/pip install -r /opt/dutchgroceries/src/requirements.lock /opt/dutchgroceries/src
+sudo systemctl restart groceries-web.service
+/opt/dutchgroceries/venv/bin/groceries --version
+```
+
+The next run of `groceries-sync.timer` uses the new version; `sudo systemctl start groceries-sync.service`
+runs it now. If the units in `deploy/systemd/` changed (see the changelog), copy them again and run
+`sudo systemctl daemon-reload` first.
+
+### After an upgrade: re-parsing your purchases
+
+Parser fixes also apply to purchases you synced before the upgrade. The first time `groceries serve` or
+`groceries sync` starts with a different version, it re-parses the raw responses it saved for the stored
+purchases (no network, no login) and logs what changed, for example
+`upgrade: … total 21.88 -> 21.38, 1 lines added, 2 removed`. The dashboard is available meanwhile; a
+sync does it before fetching. This happens once per version; the database remembers the last version
+that did it, and a downgrade to 1.2.1 or later counts as a change too (older versions do not record it:
+after going back to one of those, run `groceries reimport` yourself). Raw files without a stored purchase (for example
+left by a sync that failed halfway) are skipped; the next sync fetches those purchases again. If it
+stops with an error, the app carries on and tries again on the next start. Single purchases that cannot
+be parsed are listed as warnings and not tried again until the next upgrade;
+`groceries reimport --dry-run` shows them. Find the messages with `docker compose logs web sync` or
+`journalctl -u groceries-web -u groceries-sync`.
+
+To do it yourself instead, set `GROCERIES_AUTO_REIMPORT=false` (the version is then not recorded, so
+turning it back on re-parses once more) and run
+`groceries reimport --dry-run`, then `groceries reimport` (see [Debugging](#debugging)). With Docker,
+prefix the commands with `docker compose exec web`.
+
 ## Connecting Albert Heijn and Jumbo
 
 Both apps log in through a page that ends by handing a one-time code to the phone app (`appie://`,
@@ -181,6 +233,7 @@ to (the systemd units do this); [`.env.example`](.env.example) lists them all, c
 | `GROCERIES_TZ` | `Europe/Amsterdam` | Timezone for days and months. Applies to purchases synced afterwards; run `groceries sync --full` to redo older ones. |
 | `GROCERIES_REQUEST_DELAY` | `0.5` | Seconds between API calls. |
 | `GROCERIES_AH_USER_AGENT` | `Appie/8.22.3` | User-Agent the Albert Heijn app API expects. |
+| `GROCERIES_AUTO_REIMPORT` | `true` | Re-parse the saved purchases once after an upgrade (see [Upgrading](#upgrading)). |
 | `GROCERIES_PUBLIC_PRICES` | `false` | Refresh public shelf prices after each sync (weekly at most; needs git). |
 | `GROCERIES_NTFY_URL` | (none) | ntfy topic URL for alerts. |
 | `GROCERIES_NTFY_TOKEN` | (none) | ntfy access token, if your server needs one. |
@@ -255,13 +308,17 @@ mapping JSON file for any other bank (see `src/groceries/importers/bank.py`). Th
 | `groceries import-token ah\|jumbo [--account NAME]` | Start from an existing refresh token (read from stdin). |
 | `groceries accounts list` | Every store account, its state and number of purchases. |
 | `groceries accounts rename NAME NEW` | Rename an account (name or id). |
-| `groceries accounts remove NAME [--purge] [--yes]` | Delete an account's login; its purchases stay unless `--purge`. Asks first. |
-| `groceries reimport [--provider ah\|jumbo] [--account NAME] [--receipt ID] [--dry-run]` | Re-parse the saved raw responses with the current parser and update the database. No network, no login. |
+| `groceries accounts remove NAME [--purge] [--yes]` | Delete an account's login; its purchases stay unless `--purge`, which also deletes their saved raw responses (purges before 1.2.1 left them: a manual `groceries reimport` would add those purchases again). Asks first. |
+| `groceries reimport [--provider ah\|jumbo] [--account NAME] [--receipt ID] [--dry-run]` | Re-parse the saved raw responses with the current parser and update the database. No network, no login. A raw file without a stored purchase is added, to `--account` or the retailer's first account. |
 | `groceries export-raw --receipt ID [--redact] [-o FILE]` | Print the saved raw response of one purchase, e.g. for a bug report. |
 | `groceries import-prices checkjebon [--since 2022-11-01] [--every-days 7] [--full]` | Backfill public shelf prices. |
 | `groceries import-bank FILE.csv [--format ing\|generic\|mapping.json]` | Import supermarket payments from a bank CSV. |
 | `groceries demo-seed [--months 24]` | Fill an empty data directory with synthetic purchases. |
 | `groceries stats [--range week\|month\|quarter\|year\|2y]` | Print a JSON summary, optionally for a rolling period ending today. |
+| `groceries --version` | Print the installed version (also in the dashboard footer and `/healthz`). |
+
+With Docker, run commands in the running container: `docker compose exec web groceries stats`. `login`
+is interactive and also works without the dashboard running: `docker compose run --rm web login ah`.
 
 ## Data and privacy
 
@@ -325,7 +382,7 @@ groceries reimport --receipt ID --dry-run     # one receipt (receipt/order id or
 `reimport` also drops catalogue titles that a search matched to the wrong product, so the dashboard shows
 the receipt name until the next sync finds a better match. Running it twice changes nothing the second
 time. Back up `groceries.db` first if you want to compare. With Docker, prefix the commands with
-`docker compose exec groceries`.
+`docker compose exec web`, for example `docker compose exec web groceries reimport --dry-run`.
 
 A Jumbo receipt whose lines do not add up to its total is logged as
 `Jumbo receipt <id>: lines add up to … but the receipt total is …`.

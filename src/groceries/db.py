@@ -131,6 +131,12 @@ CREATE TABLE IF NOT EXISTS bank_payments (
 );
 CREATE INDEX IF NOT EXISTS bank_payments_date ON bank_payments (retailer, date);
 
+-- Key/value state of the database itself, e.g. the app version that last checked it (see upgrade.py).
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     retailer      TEXT NOT NULL,

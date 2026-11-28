@@ -169,17 +169,33 @@ def disconnect(conn: sqlite3.Connection, config: Config, account_id: int) -> Non
         conn.execute("UPDATE accounts SET status = 'disconnected' WHERE id = ? AND status != 'removed'", (account_id,))
 
 
+def default_account(conn: sqlite3.Connection, retailer: str) -> int:
+    """The account a purchase without one goes to: the retailer's first account that is not removed,
+    else its first account, else a new "Main"."""
+    row = conn.execute(
+        "SELECT id FROM accounts WHERE retailer = ? ORDER BY status = 'removed', id LIMIT 1", (retailer,)
+    ).fetchone()
+    return int(row[0]) if row else main_account(conn, retailer)
+
+
 def remove(conn: sqlite3.Connection, config: Config, account_id: int, purge: bool = False) -> int:
     """Forget an account's login and hide it from Connections. Its purchases stay, still labelled,
-    unless `purge`: then they and the account are deleted. Returns how many purchases were deleted."""
+    unless `purge`: then they, their saved raw responses and the account are deleted (so a later
+    `groceries reimport` cannot bring them back). Returns how many purchases were deleted."""
     disconnect(conn, config, account_id)
     with conn:
         if not purge:
             conn.execute("UPDATE accounts SET status = 'removed' WHERE id = ?", (account_id,))
             return 0
+        raw = [r[0] for r in conn.execute("SELECT raw_file FROM purchases WHERE account_id = ?", (account_id,))]
         deleted = conn.execute("DELETE FROM purchases WHERE account_id = ?", (account_id,)).rowcount
         conn.execute("DELETE FROM sync_runs WHERE account_id = ?", (account_id,))
         conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+    raw_root = config.raw_dir.resolve()
+    for rel in filter(None, raw):
+        path = (config.data_dir / rel).resolve()
+        if path.is_relative_to(raw_root):  # raw_file comes from the database: never delete outside raw/
+            path.unlink(missing_ok=True)
     return deleted
 
 
