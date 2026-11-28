@@ -598,8 +598,8 @@ function renderDrill() {
         r.lines.map((l) => `<tr class="vline${l.product_key ? " click" : ""}"${l.product_key ? ` data-k="${esc(l.retailer + "|" + l.product_key)}"` : ""}>
           <td>${esc(l.name)}${l.is_bonus ? ' <span class="pill">Bonus</span>' : ""}</td><td>${esc(l.category)}</td>
           <td class="n">${l.weight ? l.weight + " " + esc(l.weight_unit || "kg") : l.quantity ?? ""}</td>
-          <td class="n">${l.unit_price ? eur(l.unit_price) : ""}</td><td class="n">${eur(l.amount)}</td></tr>`).join("") +
-        (r.discounts || []).map((x) => `<tr class="vline"><td colspan="4" class="meta">${esc(x.name || x.type || "Discount")}</td><td class="n down">−${eur(x.amount)}</td></tr>`).join("")).join("") + "</tbody>";
+          <td class="n">${l.unit_price ? eur(l.unit_price) : ""}</td><td class="n">${amountCell(l)}</td></tr>`).join("") +
+        otherDiscounts(r.discounts).map((x) => `<tr class="vline"><td colspan="4" class="meta">${esc(x.name || x.type || "Discount")}</td><td class="n down">−${eur(x.amount)}</td></tr>`).join("")).join("") + "</tbody>";
     return;
   }
   if (drillState.tab === "items") {
@@ -618,6 +618,11 @@ function renderDrill() {
       : `<tr><td class="empty">No receipts.</td></tr>`;
   }
 }
+// a line's amount, with the Bonus discount that belongs to it underneath
+const amountCell = (l) => l.discount
+  ? `${eur(l.amount)}<br><span class="down" title="${esc((l.discount_names || []).join(", "))}">−${eur(l.discount)}</span>`
+  : eur(l.amount);
+const otherDiscounts = (ds) => (ds || []).filter((x) => x.line == null);
 async function showReceipt(id) {
   $("#dr-tabs").hidden = true;
   $("#dr-sum").textContent = "Loading…";
@@ -629,8 +634,8 @@ async function showReceipt(id) {
     p.lines.map((l) => `<tr${l.product_key && l.product_key !== "stamps" ? ` class="click" data-k="${esc(l.retailer + "|" + l.product_key)}"` : ""}>
       <td>${esc(l.title || l.name)}${l.is_bonus ? ' <span class="pill">Bonus</span>' : ""}</td><td>${esc(l.category || "")}</td>
       <td class="n">${l.weight ? l.weight + " " + esc(l.weight_unit || "kg") : l.quantity ?? ""}</td>
-      <td class="n">${l.unit_price ? eur(l.unit_price) : ""}</td><td class="n">${eur(l.amount)}</td></tr>`).join("") +
-    (p.discounts || []).map((x) => `<tr><td colspan="4" class="meta">${esc(x.name || x.type || "Discount")}</td><td class="n down">−${eur(x.amount)}</td></tr>`).join("") + "</tbody>";
+      <td class="n">${l.unit_price ? eur(l.unit_price) : ""}</td><td class="n">${amountCell(l)}</td></tr>`).join("") +
+    otherDiscounts(p.discounts).map((x) => `<tr><td colspan="4" class="meta">${esc(x.name || x.type || "Discount")}</td><td class="n down">−${eur(x.amount)}</td></tr>`).join("") + "</tbody>";
 }
 $("#dr-close").addEventListener("click", () => $("#drill").close());
 $("#drill").addEventListener("click", (e) => {

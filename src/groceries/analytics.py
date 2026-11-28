@@ -561,6 +561,7 @@ class Analytics:
                 p["lines"], p["discounts"] = [], []
             for r in self._rows(
                 f"""SELECT l.purchase_id, l.retailer, l.product_key, COALESCE(pr.title, l.name) AS name,
+                           l.name AS receipt_name,
                            {cat} AS category, l.quantity, l.weight, l.weight_unit, l.unit_price, l.amount, l.is_bonus
                     {base} ORDER BY l.purchase_id, l.line_no""",
                 args,
@@ -574,6 +575,8 @@ class Analytics:
                     list(by_id),
                 ):
                     by_id[r.pop("purchase_id")]["discounts"].append(r)
+                for p in purchases:
+                    attach_discounts(p["lines"], p["discounts"])
         return {
             "items": items,
             "purchases": purchases,
@@ -591,10 +594,12 @@ class Analytics:
                WHERE l.purchase_id = ? ORDER BY l.line_no""",
             (purchase_id,),
         )
+        discounts = self._rows("SELECT * FROM discounts WHERE purchase_id = ? ORDER BY idx", (purchase_id,))
+        attach_discounts(lines, discounts, title="title")
         return {
             **head[0],
             "lines": lines,
-            "discounts": self._rows("SELECT * FROM discounts WHERE purchase_id = ? ORDER BY idx", (purchase_id,)),
+            "discounts": discounts,
             "payments": self._rows("SELECT * FROM payments WHERE purchase_id = ? ORDER BY idx", (purchase_id,)),
         }
 
@@ -615,6 +620,68 @@ class Analytics:
             ],
             "bank_months": self.bank_months(),
         }
+
+
+def _squash(text: str | None) -> str:
+    """Letters and digits only, upper case: 'AH Witte druiven' -> 'AHWITTEDRUIVEN'."""
+    return re.sub(r"[^0-9A-Z]", "", (text or "").upper())
+
+
+def _common_run(a: str, b: str) -> int:
+    """Length of the longest common substring."""
+    best, prev = 0, [0] * (len(b) + 1)
+    for ca in a:
+        cur = [0] * (len(b) + 1)
+        for j, cb in enumerate(b, 1):
+            if ca == cb:
+                cur[j] = prev[j - 1] + 1
+                best = max(best, cur[j])
+        prev = cur
+    return best
+
+
+def attach_discounts(lines: list[dict[str, Any]], discounts: list[dict[str, Any]], title: str = "name") -> None:
+    """Link receipt-level discounts to the line they are for.
+
+    AH lists Bonus discounts per receipt under a cut-short name without spaces ('AHWITTEDRUIV' for
+    'AH WITTE DRUIVEN'). Each discount goes to the line whose receipt name or title shares the longest
+    run of letters with it (at least 5), preferring Bonus lines; when one discount and one Bonus line are
+    left, they belong together. Sets `discount` (total) and `discount_names` on lines and `line` (the
+    line's index) on discounts; unmatched discounts keep `line` = None.
+    """
+    for ln in lines:
+        ln["discount"], ln["discount_names"] = 0.0, []
+    pairs = []
+    for di, d in enumerate(discounts):
+        dn = _squash(d.get("name"))
+        if len(dn) < 4:
+            continue
+        for li, ln in enumerate(lines):
+            if not ln.get("product_key") or (ln.get("amount") or 0) <= 0:
+                continue
+            names = {_squash(ln.get("receipt_name") or ln.get("name")), _squash(ln.get(title))}
+            names |= {n[2:] for n in names if n.startswith("AH")}
+            run = max(_common_run(dn, n) for n in names if n) if any(names) else 0
+            if run >= 5 or (run >= 4 and run == len(dn)):
+                pairs.append((run, bool(ln.get("is_bonus")), di, li))
+    taken_d, taken_l = set(), set()
+    for d in discounts:
+        d["line"] = None
+    for _run, _bonus, di, li in sorted(pairs, reverse=True):
+        if di in taken_d or li in taken_l:
+            continue
+        taken_d.add(di)
+        taken_l.add(li)
+        discounts[di]["line"] = li
+    left_d = [i for i, d in enumerate(discounts) if d["line"] is None and (d.get("amount") or 0) > 0]
+    left_l = [i for i, ln in enumerate(lines) if ln.get("is_bonus") and i not in taken_l]
+    if len(left_d) == 1 and len(left_l) == 1:
+        discounts[left_d[0]]["line"] = left_l[0]
+    for d in discounts:
+        if d["line"] is not None:
+            ln = lines[d["line"]]
+            ln["discount"] = round(ln["discount"] + (d.get("amount") or 0), 2)
+            ln["discount_names"].append(d.get("name"))
 
 
 def _pack_kg(size: str) -> float | None:
