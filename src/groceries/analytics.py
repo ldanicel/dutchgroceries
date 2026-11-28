@@ -641,47 +641,81 @@ def _common_run(a: str, b: str) -> int:
 
 
 def attach_discounts(lines: list[dict[str, Any]], discounts: list[dict[str, Any]], title: str = "name") -> None:
-    """Link receipt-level discounts to the line they are for.
+    """Link receipt-level discounts to the line(s) they are for.
 
     AH lists Bonus discounts per receipt under a cut-short name without spaces ('AHWITTEDRUIV' for
-    'AH WITTE DRUIVEN'). Each discount goes to the line whose receipt name or title shares the longest
-    run of letters with it (at least 5), preferring Bonus lines; when one discount and one Bonus line are
-    left, they belong together. Sets `discount` (total) and `discount_names` on lines and `line` (the
-    line's index) on discounts; unmatched discounts keep `line` = None.
+    'AH WITTE DRUIVEN'). First every discount goes to the one line whose receipt name or title shares the
+    longest run of letters with it (at least 5), Bonus lines first. Then deals over several products
+    ('ALLELUKOEK', 'BIOPREMIUMWI' for organic products) are split over the lines that match them, in
+    proportion to their amounts. A single discount left over goes to a single Bonus line left over.
+    Sets `discount` (total) and `discount_names` on lines, and `line` (first line index, None when
+    unmatched) and `split` ([{line, amount}]) on discounts.
     """
     for ln in lines:
         ln["discount"], ln["discount_names"] = 0.0, []
+    names = []
+    for ln in lines:
+        ns = {_squash(ln.get("receipt_name") or ln.get("name")), _squash(ln.get(title))} - {""}
+        ns |= {n[2:] for n in ns if n.startswith("AH")}
+        names.append(ns)
+    usable = [i for i, ln in enumerate(lines) if ln.get("product_key") and (ln.get("amount") or 0) > 0]
+
+    def run(dn: str, li: int) -> int:
+        return max((_common_run(dn, n) for n in names[li]), default=0)
+
+    for d in discounts:
+        d["line"], d["split"] = None, []
     pairs = []
     for di, d in enumerate(discounts):
         dn = _squash(d.get("name"))
-        if len(dn) < 4:
-            continue
-        for li, ln in enumerate(lines):
-            if not ln.get("product_key") or (ln.get("amount") or 0) <= 0:
-                continue
-            names = {_squash(ln.get("receipt_name") or ln.get("name")), _squash(ln.get(title))}
-            names |= {n[2:] for n in names if n.startswith("AH")}
-            run = max(_common_run(dn, n) for n in names if n) if any(names) else 0
-            if run >= 5 or (run >= 4 and run == len(dn)):
-                pairs.append((run, bool(ln.get("is_bonus")), di, li))
+        if len(dn) < 4 or (d.get("amount") or 0) <= 0 or dn.startswith(("BIOPREMIUM", "ALLE")):
+            continue  # deals over several products: below
+        found = [(run(dn, li), li) for li in usable]
+        found = [(r, li) for r, li in found if r >= 5 or (r >= 4 and r == len(dn))]
+        best = max((r for r, _li in found), default=0)
+        if sum(r == best for r, _li in found) > 1 and all(lines[li].get("is_bonus") for r, li in found if r == best):
+            continue  # several Bonus lines match equally well: a deal over all of them
+        pairs += [(r, bool(lines[li].get("is_bonus")), di, li) for r, li in found]
     taken_d, taken_l = set(), set()
-    for d in discounts:
-        d["line"] = None
-    for _run, _bonus, di, li in sorted(pairs, reverse=True):
+    for _r, _bonus, di, li in sorted(pairs, reverse=True):
         if di in taken_d or li in taken_l:
             continue
         taken_d.add(di)
         taken_l.add(li)
-        discounts[di]["line"] = li
-    left_d = [i for i, d in enumerate(discounts) if d["line"] is None and (d.get("amount") or 0) > 0]
+        discounts[di]["split"] = [{"line": li, "amount": discounts[di]["amount"]}]
+
+    # deals over several products
+    for di, d in enumerate(discounts):
+        if di in taken_d or (d.get("amount") or 0) <= 0:
+            continue
+        dn = _squash(d.get("name"))
+        if dn.startswith("BIOPREMIUM"):
+            cands = [li for li in usable if any(n.startswith("BIO") or "BIOLOGISCH" in n for n in names[li])]
+        else:
+            core = re.sub(r"^(ALLE|AH|MB)", "", dn)
+            cands = [li for li in usable if len(core) >= 4 and run(core, li) >= 4]
+        bonus = [li for li in cands if lines[li].get("is_bonus")]
+        cands = bonus or cands
+        if not cands:
+            continue
+        total = sum(lines[li]["amount"] for li in cands)
+        shares = [round(d["amount"] * lines[li]["amount"] / total, 2) for li in cands]
+        shares[-1] = round(d["amount"] - sum(shares[:-1]), 2)  # keep the cents exact
+        d["split"] = [{"line": li, "amount": a} for li, a in zip(cands, shares, strict=True)]
+        taken_d.add(di)
+        taken_l.update(cands)
+
+    left_d = [i for i, d in enumerate(discounts) if i not in taken_d and (d.get("amount") or 0) > 0]
     left_l = [i for i, ln in enumerate(lines) if ln.get("is_bonus") and i not in taken_l]
     if len(left_d) == 1 and len(left_l) == 1:
-        discounts[left_d[0]]["line"] = left_l[0]
+        d = discounts[left_d[0]]
+        d["split"] = [{"line": left_l[0], "amount": d["amount"]}]
     for d in discounts:
-        if d["line"] is not None:
-            ln = lines[d["line"]]
-            ln["discount"] = round(ln["discount"] + (d.get("amount") or 0), 2)
+        for part in d["split"]:
+            ln = lines[part["line"]]
+            ln["discount"] = round(ln["discount"] + part["amount"], 2)
             ln["discount_names"].append(d.get("name"))
+        d["line"] = d["split"][0]["line"] if d["split"] else None
 
 
 def _pack_kg(size: str) -> float | None:

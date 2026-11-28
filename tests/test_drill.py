@@ -99,3 +99,32 @@ def test_discounts_attach_to_their_line() -> None:
     assert [d["line"] for d in discounts] == [1, 2, 3, None]
     assert [ln["discount"] for ln in lines] == [0, 0.70, 0.50, 0.44]
     assert lines[1]["discount_names"] == ["AHWITTEDRUIV"]
+
+
+def test_deals_over_several_products_are_split() -> None:
+    from groceries.analytics import attach_discounts
+
+    lines = [
+        {"product_key": "1", "receipt_name": "LU KOEK A", "name": "Example LU koek A", "amount": 2.0, "is_bonus": 1},
+        {"product_key": "2", "receipt_name": "LU KOEK B", "name": "Example LU koek B", "amount": 3.0, "is_bonus": 1},
+        {"product_key": "3", "receipt_name": "BIO MELK", "name": "AH Biologisch Melk", "amount": 1.5, "is_bonus": 1},
+        {
+            "product_key": "4",
+            "receipt_name": "BIO EIEREN",
+            "name": "AH Biologisch Eieren",
+            "amount": 4.5,
+            "is_bonus": 1,
+        },  # fmt: skip
+        {"product_key": "5", "receipt_name": "BROOD", "name": "Example Brood", "amount": 2.5},
+    ]
+    discounts = [
+        {"name": "ALLELUKOEK", "amount": 1.0},
+        {"name": "BIOPREMIUMST", "amount": 0.61},
+        {"name": "MIJN AH MILES", "amount": 1.0},
+    ]
+    attach_discounts(lines, discounts)
+    assert discounts[0]["split"] == [{"line": 0, "amount": 0.4}, {"line": 1, "amount": 0.6}]
+    assert [p["line"] for p in discounts[1]["split"]] == [2, 3]
+    assert round(sum(p["amount"] for p in discounts[1]["split"]), 2) == 0.61
+    assert discounts[2]["line"] is None  # a credit for no product stays on the receipt
+    assert lines[4]["discount"] == 0
