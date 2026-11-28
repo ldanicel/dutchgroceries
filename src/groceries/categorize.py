@@ -67,7 +67,7 @@ RULES: list[tuple[str, str]] = [
         "Soepen, sauzen, kruiden, olie",
     ),
     (
-        r"HUMMUS|BABAGANOUSH|TZATZIKI|SALADE|MAALTIJD|LASAGNE|OVENSCHOTEL|PIZZA|QUICHE|NOODLE ?CUP|GEVULD EI",
+        r"HUMMUS|BABAGANOUSH|TZATZIKI|\w*SALADE|MAALTIJD|LASAGNE|OVENSCHOTEL|PIZZA|QUICHE|NOODLE ?CUP|GEVULD EI",
         "Maaltijden, salades",
     ),
     (
