@@ -104,8 +104,9 @@ button.danger { color: var(--up); }
 button:disabled { opacity: .5; }
 dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text);
   max-width: 560px; width: calc(100% - 32px); padding: 20px; }
-dialog.wide { max-width: 860px; max-height: calc(100vh - 48px); display: flex; flex-direction: column; padding: 0; }
+dialog.wide { max-width: 860px; max-height: calc(100vh - 48px); flex-direction: column; padding: 0; }
 dialog.wide[open] { display: flex; }
+dialog.wide:not([open]) { display: none; }
 dialog.wide header { display: flex; flex-wrap: nowrap; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 18px 20px 8px; max-width: none; margin: 0; width: 100%; }
 dialog.wide .body { overflow: auto; padding: 0 20px 16px; }
 dialog.wide .sum { color: var(--text-2); font-size: 13px; margin: 0; }

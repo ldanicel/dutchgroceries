@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.4.1 – 2026-11-28
+
+- Fix: the drill-down panel showed at the bottom of the page while closed.
+
 ## v1.4.0 – 2026-11-28
 
 - **Click a bar to see what is behind it.** Every bar chart (spend per month or day, spend per category,
